@@ -1,0 +1,583 @@
+package com.vulcanlabs.localize.ui
+
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.TextFieldWithBrowseButton
+import com.intellij.ui.JBColor
+import com.intellij.ui.OnePixelSplitter
+import com.intellij.ui.TitledSeparator
+import com.intellij.ui.components.JBCheckBox
+import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBScrollPane
+import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
+import com.vulcanlabs.localize.LocalizeRunner
+import com.vulcanlabs.localize.config.*
+import com.vulcanlabs.localize.core.JsonLocalizer
+import com.vulcanlabs.localize.core.TranslationDb
+import java.awt.*
+import java.nio.file.Path
+import java.nio.file.Paths
+import javax.swing.*
+import kotlin.io.path.exists
+
+class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
+
+    private val persistence = ConfigPersistence(project)
+    private val projectDir: Path = Paths.get(project.basePath ?: ".")
+
+    // CSV pickers
+    private val csvAndroidField = createFilePicker()
+    private val csvOverlapField  = createFilePicker()
+    private val csvArraysField   = createFilePicker()
+
+    // Language checkboxes
+    private val languageBoxes = mutableMapOf<String, JBCheckBox>()
+    private val languageRow   = JPanel(WrapLayout(FlowLayout.LEFT, 8, 4))
+
+    // XML checkboxes
+    private val xmlBoxes = mutableMapOf<String, JBCheckBox>()
+    private val xmlRow   = JPanel(WrapLayout(FlowLayout.LEFT, 8, 4))
+
+    // JSON asset rows
+    data class AssetRow(
+        val assetBox: JBCheckBox,
+        var selectedFields: MutableList<String>,
+        var config: AssetConfig
+    )
+    private val assetRows  = mutableMapOf<String, AssetRow>()
+    private val assetPanel = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
+
+    // Ignored assets group — MUST be declared before init {}
+    private data class IgnoredAsset(val name: String, val config: AssetConfig, val reason: String)
+    private val ignoredList         = mutableListOf<IgnoredAsset>()
+    private val ignoredSectionPanel = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        alignmentX = Component.LEFT_ALIGNMENT
+    }
+    private var ignoredExpanded = false
+
+    // Log output
+    val outputPanel = LocalizeOutputPanel()
+
+    // Generate button — no custom colors, use IDE theme defaults
+    private val generateBtn = JButton("Generate").apply {
+        font = font.deriveFont(Font.BOLD, 13f)
+        preferredSize = Dimension(120, 30)
+        addActionListener { onGenerate() }
+    }
+
+    init {
+        buildUI()
+        restoreAndScan()
+    }
+
+    // ── Layout ────────────────────────────────────────────────────────────────
+
+    private fun buildUI() {
+        // ── Config panel (top) ─────────────────────────────────────────────────
+        val config = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
+        config.border = JBUI.Borders.empty(8, 10)
+
+        // Generate button at the top
+        val btnRow = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            maximumSize = Dimension(Int.MAX_VALUE, 36)
+            add(generateBtn)
+        }
+        config.add(btnRow)
+        config.add(vgap(8))
+
+        config.add(section("CSV Files"))
+        config.add(vgap(4))
+        config.add(csvRow("android_only_strings.csv", csvAndroidField))
+        config.add(vgap(3))
+        config.add(csvRow("overlap.csv  (optional)", csvOverlapField))
+        config.add(vgap(3))
+        config.add(csvRow("array_strings.csv  (optional)", csvArraysField))
+        config.add(vgap(10))
+
+        config.add(section("Languages"))
+        config.add(vgap(4))
+        languageRow.alignmentX = Component.LEFT_ALIGNMENT
+        config.add(languageRow)
+        config.add(vgap(10))
+
+        config.add(section("XML Files"))
+        config.add(vgap(4))
+        xmlRow.alignmentX = Component.LEFT_ALIGNMENT
+        config.add(xmlRow)
+        config.add(vgap(10))
+
+        config.add(section("JSON Assets"))
+        config.add(vgap(4))
+        assetPanel.alignmentX = Component.LEFT_ALIGNMENT
+        config.add(assetPanel)
+        config.add(vgap(10))
+
+        val configScroll = JBScrollPane(config).apply {
+            border = BorderFactory.createEmptyBorder()
+            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
+        }
+
+        // ── Log panel (bottom) ─────────────────────────────────────────────────
+        val logHeader = JBLabel("  Log").apply {
+            font = font.deriveFont(Font.BOLD, 12f)
+            foreground = UIUtil.getContextHelpForeground()
+            border = JBUI.Borders.empty(4, 6, 4, 0)
+        }
+        val logWrapper = JPanel(BorderLayout()).apply {
+            add(logHeader, BorderLayout.NORTH)
+            add(JBScrollPane(outputPanel.textPane).apply {
+                border = BorderFactory.createEmptyBorder()
+            }, BorderLayout.CENTER)
+        }
+
+        // ── OnePixelSplitter: clean 1px divider, no ugly JSplitPane handle ────
+        val split = OnePixelSplitter(true, 0.65f).apply {
+            firstComponent  = configScroll
+            secondComponent = logWrapper
+        }
+        add(split, BorderLayout.CENTER)
+    }
+
+    // ── Restore & detect ──────────────────────────────────────────────────────
+
+    fun restoreAndScan() {
+        if (persistence.csvAndroidOnly.isNotEmpty()) csvAndroidField.text = persistence.csvAndroidOnly
+        if (persistence.csvOverlap.isNotEmpty())     csvOverlapField.text  = persistence.csvOverlap
+        if (persistence.csvArrays.isNotEmpty())      csvArraysField.text   = persistence.csvArrays
+
+        if (persistence.csvAndroidOnly.isEmpty()) {
+            projectDir.toFile().listFiles { f -> f.extension == "csv" }?.forEach { csv ->
+                val n = csv.name.lowercase()
+                when {
+                    "android_only" in n               -> csvAndroidField.text = csv.absolutePath
+                    "overlap" in n && "array" !in n   -> csvOverlapField.text  = csv.absolutePath
+                    "array"   in n                    -> csvArraysField.text   = csv.absolutePath
+                }
+            }
+        }
+
+        Paths.get(csvAndroidField.text.trim()).takeIf { it.exists() }?.let { detectLanguages(it) }
+        scanXmlFiles()
+        scanAssets()
+
+        csvAndroidField.textField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
+            override fun insertUpdate(e: javax.swing.event.DocumentEvent)  = redetect()
+            override fun removeUpdate(e: javax.swing.event.DocumentEvent)  = redetect()
+            override fun changedUpdate(e: javax.swing.event.DocumentEvent) = redetect()
+            private fun redetect() {
+                Paths.get(csvAndroidField.text.trim()).takeIf { it.exists() }?.let { detectLanguages(it) }
+            }
+        })
+    }
+
+    private fun detectLanguages(csvPath: Path) {
+        val allHeaders = TranslationDb().readHeaders(csvPath)
+            .filter { it.isNotEmpty() && it.lowercase() !in NON_LANGUAGE_COLS }
+
+        val resolved   = mutableMapOf<String, String>()  // col → android_locale
+        val unresolved = mutableListOf<String>()
+
+        allHeaders.forEach { col ->
+            val locale = resolveLocale(col)
+                ?: persistence.customLocaleMap[col.lowercase()]   // Strategy 4: persisted custom
+            if (locale != null) resolved[col] = locale
+            else unresolved += col
+        }
+
+        languageRow.removeAll(); languageBoxes.clear()
+        val saved = persistence.checkedLanguages.map { it.lowercase() }
+
+        // ── Resolved checkboxes ────────────────────────────────────────────
+        resolved.forEach { (col, locale) ->
+            val label = "${col.replaceFirstChar { it.uppercase() }} ($locale)"
+            languageBoxes[col] = JBCheckBox(label).apply {
+                isSelected = saved.isEmpty() || col.lowercase() in saved
+                font = font.deriveFont(13f)
+            }
+            languageRow.add(languageBoxes[col])
+        }
+
+        // ── Unrecognized headers — show with text input ────────────────────
+        if (unresolved.isNotEmpty()) {
+            languageRow.add(JBLabel("  |  Unrecognized:").apply {
+                foreground = UIUtil.getContextHelpForeground()
+                font = font.deriveFont(Font.ITALIC, 11f)
+            })
+            unresolved.forEach { col ->
+                val field = javax.swing.JTextField(6).apply {
+                    toolTipText = "Android locale code for \"$col\" (e.g. vi, id, ms)"
+                    font = font.deriveFont(12f)
+                }
+                val label = JBLabel("\"$col\" →").apply {
+                    foreground = UIUtil.getContextHelpForeground()
+                    font = font.deriveFont(Font.ITALIC, 11f)
+                }
+                // When user confirms the locale code (press Enter or focus lost)
+                val confirm: () -> Unit = confirm@{
+                    val code = field.text.trim().lowercase()
+                    if (code.isEmpty()) return@confirm
+                    // Save to persistence and add checkbox
+                    val custom = persistence.customLocaleMap.toMutableMap()
+                    custom[col.lowercase()] = code
+                    persistence.customLocaleMap = custom
+                    // Re-run detection to refresh the whole panel
+                    detectLanguages(csvPath)
+                }
+                field.addActionListener { confirm() }
+                field.addFocusListener(object : java.awt.event.FocusAdapter() {
+                    override fun focusLost(e: java.awt.event.FocusEvent) = confirm()
+                })
+                languageRow.add(label)
+                languageRow.add(field)
+            }
+        }
+
+        languageRow.revalidate(); languageRow.repaint()
+    }
+
+    /**
+     * Resolves a CSV column header to an Android locale code using 3 strategies:
+     * 1. Direct match in LANGUAGE_LOCALE_MAP (English names, ISO codes, aliases, native names)
+     * 2. Java Locale display language matching (handles any language Java knows about)
+     * Returns null if unresolved — caller should check customLocaleMap or show fallback UI.
+     */
+    private fun resolveLocale(header: String): String? {
+        val h = header.trim().lowercase()
+        // Strategy 1+2: check expanded map
+        LANGUAGE_LOCALE_MAP[h]?.let { return it }
+        // Strategy 3: Java Locale display name matching
+        for (locale in java.util.Locale.getAvailableLocales()) {
+            if (locale.language.isEmpty()) continue
+            val enName = locale.getDisplayLanguage(java.util.Locale.ENGLISH).lowercase()
+            val native = locale.displayLanguage.lowercase()
+            if (enName == h || native == h) return locale.language
+        }
+        return null
+    }
+
+    private fun scanXmlFiles() {
+        val valuesDir = projectDir.resolve("app/src/main/res/values").toFile()
+        if (!valuesDir.exists()) return
+        val saved = persistence.checkedXmlFiles
+        xmlRow.removeAll(); xmlBoxes.clear()
+        valuesDir.listFiles { f -> f.extension == "xml" }?.sortedBy { it.name }?.forEach { file ->
+            if (file.name in XML_NON_TRANSLATABLE_NAMES) return@forEach
+            if (!file.readText().contains("<string")) return@forEach
+            xmlBoxes[file.name] = JBCheckBox(file.name).apply {
+                isSelected = saved.isEmpty() || file.name in saved
+                font = font.deriveFont(13f)
+            }
+            xmlRow.add(xmlBoxes[file.name])
+        }
+        xmlRow.revalidate(); xmlRow.repaint()
+    }
+
+    // Data class for ignored (hidden) assets
+    private fun scanAssets() {
+        val assetsDir = projectDir.resolve("app/src/main/assets").toFile()
+        if (!assetsDir.exists()) return
+        val savedAssets = persistence.checkedAssets
+        val savedFields = persistence.assetFields
+        val localizer   = JsonLocalizer(TranslationDb())
+
+        // Clear everything
+        assetPanel.removeAll()
+        assetRows.clear()
+        ignoredList.clear()
+
+        assetsDir.listFiles { f -> f.isDirectory }?.sortedBy { it.name }?.forEach { dir ->
+            val baseFile = dir.listFiles { f ->
+                f.extension == "json" &&
+                !f.nameWithoutExtension.contains(Regex("_[a-z]{2}(-r[A-Z]{2})?$"))
+            }?.firstOrNull() ?: return@forEach
+
+            val stub    = AssetConfig(dir.name, dir.toPath(), baseFile.name, DEFAULT_TRANSLATE_FIELDS)
+            val dataKey = localizer.detectDataKey(stub)
+            val withKey = stub.copy(dataKey = dataKey)
+
+            val reason = localizer.ignoreReason(withKey)
+            // If user explicitly added this from ignored group before, show in main list
+            if (reason != null && dir.name !in savedAssets) {
+                ignoredList += IgnoredAsset(dir.name, withKey, reason)
+                return@forEach
+            }
+            addMainRow(dir.name, withKey, localizer, savedAssets, savedFields)
+        }
+
+        // Add the ignored section panel ONCE at the bottom
+        assetPanel.add(ignoredSectionPanel)
+        rebuildIgnoredSection(localizer, savedFields)
+
+        assetPanel.revalidate(); assetPanel.repaint()
+    }
+
+    /**
+     * Add one row to the main list (above the ignored section).
+     * The row is inserted BEFORE ignoredSectionPanel.
+     */
+    private fun addMainRow(
+        name: String, withKey: AssetConfig,
+        localizer: JsonLocalizer,
+        savedAssets: List<String>, savedFields: Map<String, List<String>>
+    ) {
+        val auto          = localizer.detectTranslateFields(withKey)
+        val allJsonFields = localizer.detectAllStringFields(withKey)
+        val saved         = savedFields[name]?.filter { it in allJsonFields }
+        val initial       = (saved ?: auto).toMutableList()
+
+        val row = AssetRow(
+            JBCheckBox(name).apply {
+                isSelected = savedAssets.isEmpty() || name in savedAssets
+                font = font.deriveFont(13f)
+            },
+            initial, withKey.copy(translateFields = initial)
+        )
+        assetRows[name] = row
+
+        val summaryLabel = JBLabel(fieldSummary(initial)).apply {
+            foreground = UIUtil.getContextHelpForeground()
+            font = font.deriveFont(11f)
+        }
+        val gearBtn = JButton("⚙").apply {
+            toolTipText = "Configure fields to translate"
+            isBorderPainted = false; isContentAreaFilled = false
+            font = font.deriveFont(14f)
+            cursor = Cursor(Cursor.HAND_CURSOR)
+            preferredSize = Dimension(28, 24)
+            isVisible = row.assetBox.isSelected
+            addActionListener {
+                val customMap = persistence.customLocaleMap
+                val locales = languageBoxes.filter { it.value.isSelected }
+                    .mapNotNull { (col, _) -> resolveLocale(col) ?: customMap[col.lowercase()] }
+                val dialog = AssetConfigDialog(project, withKey, row.selectedFields, locales)
+                if (dialog.showAndGet()) {
+                    row.selectedFields = dialog.selectedFields().toMutableList()
+                    row.config = withKey.copy(translateFields = row.selectedFields)
+                    summaryLabel.text = fieldSummary(row.selectedFields)
+                }
+            }
+        }
+        row.assetBox.addItemListener { gearBtn.isVisible = row.assetBox.isSelected }
+
+        val rowPanel = JPanel(BorderLayout(6, 0)).apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            maximumSize = Dimension(Int.MAX_VALUE, 30)
+            border = JBUI.Borders.empty(2, 0)
+            add(row.assetBox, BorderLayout.WEST)
+            add(summaryLabel, BorderLayout.CENTER)
+            add(gearBtn,      BorderLayout.EAST)
+        }
+
+        // Insert BEFORE ignoredSectionPanel (last component) if it's already added
+        val idx = assetPanel.componentCount
+        val lastIdx = if (idx > 0 && assetPanel.getComponent(idx - 1) === ignoredSectionPanel) idx - 1 else idx
+        assetPanel.add(rowPanel, lastIdx)
+    }
+
+    /**
+     * Fully rebuild ignoredSectionPanel from scratch.
+     * No nested sub-panels — flat structure, no Swing tracking issues.
+     */
+    private fun rebuildIgnoredSection(
+        localizer: JsonLocalizer,
+        savedFields: Map<String, List<String>>
+    ) {
+        ignoredSectionPanel.removeAll()
+
+        if (ignoredList.isEmpty()) {
+            ignoredSectionPanel.isVisible = false
+            ignoredSectionPanel.revalidate()
+            ignoredSectionPanel.repaint()
+            return
+        }
+
+        ignoredSectionPanel.isVisible = true
+
+        // ── Header ─────────────────────────────────────────────────────────────
+        val arrow     = if (ignoredExpanded) "▼" else "▶"
+        val headerLbl = JLabel("$arrow  Ignored  (${ignoredList.size})").apply {
+            font       = font.deriveFont(Font.ITALIC, 11f)
+            foreground = UIUtil.getContextHelpForeground()
+            cursor     = Cursor(Cursor.HAND_CURSOR)
+        }
+        headerLbl.addMouseListener(object : java.awt.event.MouseAdapter() {
+            override fun mouseClicked(e: java.awt.event.MouseEvent) {
+                ignoredExpanded = !ignoredExpanded
+                rebuildIgnoredSection(localizer, savedFields)
+                ignoredSectionPanel.revalidate()
+                ignoredSectionPanel.repaint()
+            }
+        })
+        ignoredSectionPanel.add(JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            maximumSize = Dimension(Int.MAX_VALUE, 26)
+            border = JBUI.Borders.empty(4, 0, 2, 0)
+            add(headerLbl)
+        })
+
+        if (!ignoredExpanded) {
+            ignoredSectionPanel.revalidate()
+            ignoredSectionPanel.repaint()
+            return
+        }
+
+        // ── Rows (only when expanded) ──────────────────────────────────────────
+        ignoredList.toList().forEach { ignored ->
+            val addBtn = JButton("+ Add").apply {
+                font = font.deriveFont(11f)
+                isBorderPainted = true; isContentAreaFilled = false
+                cursor = Cursor(Cursor.HAND_CURSOR)
+                preferredSize = Dimension(60, 22)
+                addActionListener {
+                    ignoredList.remove(ignored)
+                    addMainRow(ignored.name, ignored.config, localizer, emptyList(), savedFields)
+                    assetRows[ignored.name]?.assetBox?.isSelected = true
+                    rebuildIgnoredSection(localizer, savedFields)
+                    assetPanel.revalidate()
+                    assetPanel.repaint()
+                }
+            }
+            ignoredSectionPanel.add(JPanel(BorderLayout(6, 0)).apply {
+                alignmentX = Component.LEFT_ALIGNMENT
+                maximumSize = Dimension(Int.MAX_VALUE, 26)
+                border = JBUI.Borders.empty(1, 8)
+                add(JBLabel("  ${ignored.name}").apply {
+                    font = font.deriveFont(12f); preferredSize = Dimension(160, 24)
+                }, BorderLayout.WEST)
+                add(JBLabel("⚠ ${ignored.reason}").apply {
+                    font = font.deriveFont(Font.ITALIC, 11f)
+                    foreground = UIUtil.getContextHelpForeground()
+                }, BorderLayout.CENTER)
+                add(addBtn, BorderLayout.EAST)
+            })
+        }
+
+        ignoredSectionPanel.revalidate()
+        ignoredSectionPanel.repaint()
+    }
+
+    // ── Generate ──────────────────────────────────────────────────────────────
+
+    private fun onGenerate() {
+        val customMap = persistence.customLocaleMap
+        val selectedLangs = languageBoxes
+            .filter { it.value.isSelected }
+            .mapNotNull { (col, _) ->
+                val locale = resolveLocale(col) ?: customMap[col.lowercase()]
+                locale?.let { col to it }
+            }
+            .toMap()
+
+        if (selectedLangs.isEmpty()) {
+            outputPanel.append("⚠ No languages selected.", OutputLevel.WARN)
+            return
+        }
+
+        val config = LocalizeConfig(
+            csvAndroidOnly    = csvPath(csvAndroidField),
+            csvOverlap        = csvPath(csvOverlapField),
+            csvArrays         = csvPath(csvArraysField),
+            projectDir        = projectDir,
+            selectedLanguages = selectedLangs,
+            selectedXmlFiles  = xmlBoxes.filter { it.value.isSelected }.keys.toList(),
+            selectedAssets    = assetRows
+                .filter { it.value.assetBox.isSelected }
+                .map { (_, r) -> r.config.copy(translateFields = r.selectedFields) }
+        )
+
+        // Save config
+        persistence.saveAll(
+            androidOnly = csvAndroidField.text,
+            overlap     = csvOverlapField.text,
+            arrays      = csvArraysField.text,
+            languages   = languageBoxes.filter { it.value.isSelected }.keys.toList(),
+            xmlFiles    = xmlBoxes.filter { it.value.isSelected }.keys.toList(),
+            assets      = assetRows.filter { it.value.assetBox.isSelected }.keys.toList(),
+            fields      = assetRows.mapValues { it.value.selectedFields }
+        )
+
+        generateBtn.isEnabled = false
+        outputPanel.clear()
+
+        com.intellij.openapi.progress.ProgressManager.getInstance().run(
+            object : com.intellij.openapi.progress.Task.Backgroundable(project, "Generating localizations…", false) {
+                override fun run(indicator: com.intellij.openapi.progress.ProgressIndicator) {
+                    try {
+                        LocalizeRunner().run(config) { message, level ->
+                            indicator.text = message.trimStart()
+                            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                                outputPanel.append(message, level)
+                            }
+                        }
+                    } catch (ex: Exception) {
+                        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                            outputPanel.append("❌ ERROR: ${ex.message}", OutputLevel.ERROR)
+                        }
+                    } finally {
+                        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                            generateBtn.isEnabled = true
+                        }
+                    }
+                }
+            }
+        )
+    }
+
+    // ── UI helpers ────────────────────────────────────────────────────────────
+
+    private fun section(text: String) = TitledSeparator(text).apply {
+        alignmentX = Component.LEFT_ALIGNMENT
+        maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
+    }
+
+    private fun csvRow(label: String, picker: TextFieldWithBrowseButton) =
+        JPanel(BorderLayout(6, 0)).apply {
+            alignmentX = Component.LEFT_ALIGNMENT
+            maximumSize = Dimension(Int.MAX_VALUE, 30)
+            add(JBLabel(label).apply { preferredSize = Dimension(180, 26) }, BorderLayout.WEST)
+            add(picker, BorderLayout.CENTER)
+        }
+
+    private fun vgap(h: Int): Component = Box.createRigidArea(Dimension(0, h))
+
+    private fun fieldSummary(fields: List<String>) =
+        if (fields.isEmpty()) "  no fields" else "  ${fields.joinToString(", ")}"
+
+    private fun createFilePicker() = TextFieldWithBrowseButton().apply {
+        addBrowseFolderListener("Select CSV File", null, project,
+            FileChooserDescriptorFactory.createSingleFileDescriptor("csv"))
+    }
+
+    private fun csvPath(f: TextFieldWithBrowseButton): Path? {
+        val t = f.text.trim()
+        return if (t.isNotEmpty()) Paths.get(t).takeIf { it.exists() } else null
+    }
+}
+
+// FlowLayout that wraps to next line when container width is exceeded.
+class WrapLayout(align: Int, hgap: Int, vgap: Int) : FlowLayout(align, hgap, vgap) {
+    override fun preferredLayoutSize(target: Container) = layoutSize(target, true)
+    override fun minimumLayoutSize(target: Container)   = layoutSize(target, false)
+    private fun layoutSize(target: Container, preferred: Boolean): Dimension {
+        synchronized(target.treeLock) {
+            val maxW = (target.size.width.takeIf { it > 0 } ?: Int.MAX_VALUE) -
+                       target.insets.left - target.insets.right
+            var w = 0; var h = 0; var rowW = 0; var rowH = 0
+            for (i in 0 until target.componentCount) {
+                val m = target.getComponent(i).takeIf { it.isVisible } ?: continue
+                val d = if (preferred) m.preferredSize else m.minimumSize
+                if (rowW + d.width > maxW && rowW > 0) {
+                    w = maxOf(w, rowW); h += rowH + vgap; rowW = 0; rowH = 0
+                }
+                rowW += d.width + hgap; rowH = maxOf(rowH, d.height)
+            }
+            w = maxOf(w, rowW); h += rowH
+            return Dimension(w + target.insets.left + target.insets.right,
+                             h + target.insets.top  + target.insets.bottom + vgap * 2)
+        }
+    }
+}

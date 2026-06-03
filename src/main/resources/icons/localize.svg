@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- Globe outline -->
+  <circle cx="8" cy="8" r="6.5" fill="none" stroke="#4A90D9" stroke-width="1.2"/>
+  <!-- Horizontal equator line -->
+  <path d="M1.5 8 Q5 6 8 8 Q11 10 14.5 8" fill="none" stroke="#4A90D9" stroke-width="1"/>
+  <!-- Vertical center meridian -->
+  <path d="M8 1.5 Q6 5 6 8 Q6 11 8 14.5" fill="none" stroke="#4A90D9" stroke-width="1"/>
+  <!-- Translation arrows -->
+  <line x1="4" y1="3.5" x2="12" y2="3.5" stroke="#4A90D9" stroke-width="1"/>
+  <polyline points="10.5,2.2 12,3.5 10.5,4.8" fill="none" stroke="#4A90D9" stroke-width="1"/>
+</svg>
