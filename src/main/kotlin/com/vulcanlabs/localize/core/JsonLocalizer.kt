@@ -105,13 +105,6 @@ class JsonLocalizer(private val db: TranslationDb) {
         else -> el
     }
 
-    private fun translateObject(
-        obj: JsonObject,
-        fields: List<String>,
-        locale: String,
-        ctx: String,
-        unmatched: MutableList<UnmatchedField>
-    ): JsonObject = translateElement(obj, fields.toSet(), locale, ctx, unmatched).asJsonObject
 
     // Auto-detect translatable fields by comparing base JSON with reference _ko.json.
     // Matches items by a common key (id, name) to avoid false results when order differs.

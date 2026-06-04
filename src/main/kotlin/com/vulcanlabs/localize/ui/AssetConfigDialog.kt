@@ -317,12 +317,6 @@ class AssetConfigDialog(
         }
     }
 
-    private fun appendError(pane: JTextPane, msg: String) {
-        val style = SimpleAttributeSet()
-        StyleConstants.setForeground(style, JBColor.RED)
-        pane.styledDocument.insertString(pane.document.length, "\n$msg", style)
-    }
-
     override fun doCancelAction() {
         // Invalidate any pending load by incrementing generation
         loadGeneration++
