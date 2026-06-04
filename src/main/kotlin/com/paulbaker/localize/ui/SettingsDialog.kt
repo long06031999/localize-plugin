@@ -1,4 +1,4 @@
-package com.vulcanlabs.localize.ui
+package com.paulbaker.localize.ui
 
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.project.Project
@@ -8,8 +8,8 @@ import com.intellij.ui.TitledSeparator
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
-import com.vulcanlabs.localize.config.ConfigPersistence
-import com.vulcanlabs.localize.config.GenerateMode
+import com.paulbaker.localize.config.ConfigPersistence
+import com.paulbaker.localize.config.GenerateMode
 import java.awt.*
 import java.nio.file.Path
 import javax.swing.*

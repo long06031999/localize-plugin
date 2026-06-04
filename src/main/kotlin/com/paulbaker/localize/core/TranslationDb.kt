@@ -1,4 +1,4 @@
-package com.vulcanlabs.localize.core
+package com.paulbaker.localize.core
 
 import java.io.BufferedReader
 import java.io.InputStreamReader

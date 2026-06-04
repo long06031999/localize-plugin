@@ -1,7 +1,7 @@
-package com.vulcanlabs.localize.core
+package com.paulbaker.localize.core
 
-import com.vulcanlabs.localize.config.AssetConfig
-import com.vulcanlabs.localize.config.GenerateMode
+import com.paulbaker.localize.config.AssetConfig
+import com.paulbaker.localize.config.GenerateMode
 import java.nio.file.Path
 import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.io.path.exists

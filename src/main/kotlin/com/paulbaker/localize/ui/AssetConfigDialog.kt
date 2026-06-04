@@ -1,4 +1,4 @@
-package com.vulcanlabs.localize.ui
+package com.paulbaker.localize.ui
 
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
@@ -14,8 +14,8 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
-import com.vulcanlabs.localize.config.AssetConfig
-import com.vulcanlabs.localize.config.DEFAULT_TRANSLATE_FIELDS
+import com.paulbaker.localize.config.AssetConfig
+import com.paulbaker.localize.config.DEFAULT_TRANSLATE_FIELDS
 import java.awt.*
 import javax.swing.*
 import javax.swing.text.SimpleAttributeSet

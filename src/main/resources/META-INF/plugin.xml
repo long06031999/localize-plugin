@@ -1,14 +1,14 @@
 <idea-plugin dynamic="true">
-    <id>com.vulcanlabs.localize</id>
+    <id>com.paulbaker.localize-plugin</id>
     <name>Localize Tool</name>
-    <vendor>Long Ba Nguyen Vulcanlabs</vendor>
+    <vendor>Paul Baker</vendor>
     <description>Generate localized strings.xml and JSON assets from CSV translation files.</description>
 
     <depends>com.intellij.modules.platform</depends>
 
     <actions>
-        <action id="com.vulcanlabs.localize.action.LocalizeAction"
-                class="com.vulcanlabs.localize.action.LocalizeAction"
+        <action id="com.paulbaker.localize.action.LocalizeAction"
+                class="com.paulbaker.localize.action.LocalizeAction"
                 text="Localize..."
                 description="Generate localized strings.xml and JSON assets from CSV">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
@@ -21,6 +21,6 @@
                     secondary="true"
                     canCloseContents="false"
                     icon="/icons/localize.svg"
-                    factoryClass="com.vulcanlabs.localize.ui.LocalizeToolWindowFactory"/>
+                    factoryClass="com.paulbaker.localize.ui.LocalizeToolWindowFactory"/>
     </extensions>
 </idea-plugin>

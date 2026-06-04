@@ -1,10 +1,10 @@
-package com.vulcanlabs.localize
+package com.paulbaker.localize
 
-import com.vulcanlabs.localize.config.LocalizeConfig
-import com.vulcanlabs.localize.core.JsonLocalizer
-import com.vulcanlabs.localize.core.TranslationDb
-import com.vulcanlabs.localize.core.XmlGenerator
-import com.vulcanlabs.localize.ui.OutputLevel
+import com.paulbaker.localize.config.LocalizeConfig
+import com.paulbaker.localize.core.JsonLocalizer
+import com.paulbaker.localize.core.TranslationDb
+import com.paulbaker.localize.core.XmlGenerator
+import com.paulbaker.localize.ui.OutputLevel
 import java.nio.file.Path
 import kotlin.io.path.writeText
 

@@ -1,4 +1,4 @@
-package com.vulcanlabs.localize.core
+package com.paulbaker.localize.core
 
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
@@ -6,9 +6,9 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
-import com.vulcanlabs.localize.config.AssetConfig
-import com.vulcanlabs.localize.config.DEFAULT_TRANSLATE_FIELDS
-import com.vulcanlabs.localize.config.GenerateMode
+import com.paulbaker.localize.config.AssetConfig
+import com.paulbaker.localize.config.DEFAULT_TRANSLATE_FIELDS
+import com.paulbaker.localize.config.GenerateMode
 import java.nio.file.Path
 import kotlin.io.path.exists
 import kotlin.io.path.readText

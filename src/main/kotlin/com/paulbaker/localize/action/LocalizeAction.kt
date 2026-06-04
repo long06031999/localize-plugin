@@ -1,4 +1,4 @@
-package com.vulcanlabs.localize.action
+package com.paulbaker.localize.action
 
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent

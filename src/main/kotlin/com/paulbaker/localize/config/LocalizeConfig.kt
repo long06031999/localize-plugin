@@ -1,4 +1,4 @@
-package com.vulcanlabs.localize.config
+package com.paulbaker.localize.config
 
 import java.nio.file.Path
 

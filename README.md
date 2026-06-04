@@ -406,4 +406,6 @@ The plugin targets **IntelliJ Platform 2024.1** (compatible with Android Studio 
 
 ## License
 
-Internal tool — Vulcan Labs
+MIT License — Copyright (c) 2026 Paul Baker
+
+See [LICENSE](LICENSE) for full text.

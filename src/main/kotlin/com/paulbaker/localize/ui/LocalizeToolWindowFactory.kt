@@ -1,4 +1,4 @@
-package com.vulcanlabs.localize.ui
+package com.paulbaker.localize.ui
 
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
