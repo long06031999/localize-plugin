@@ -1,6 +1,6 @@
 # Localize Tool — IntelliJ / Android Studio Plugin
 
-Generates localized `strings.xml` and JSON asset files from CSV translation spreadsheets. Built for Android projects with the Chatsmith app structure, but adaptable to any standard Android project.
+Generates localized `strings.xml` and JSON asset files from CSV translation spreadsheets. Built for Android projects with the app structure, but adaptable to any standard Android project.
 
 ---
 
