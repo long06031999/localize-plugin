@@ -1,1 +1,1 @@
-rootProject.name = "chatsmith-localize-plugin"
+rootProject.name = "localize-plugin"
