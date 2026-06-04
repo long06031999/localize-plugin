@@ -153,6 +153,46 @@ class ConfigPersistence(project: Project) {
         get() = data.getString(KEY_REPORT_DIR)
         set(v) { data.addProperty(KEY_REPORT_DIR, v); flush() }
 
+    // ── CSV column mappings ────────────────────────────────────────────────────
+
+    fun getCsvMapping(filePath: String): CsvMapping? {
+        val mappings = data.getAsJsonObject(KEY_CSV_MAPPINGS) ?: return null
+        val entry = mappings.getAsJsonObject(filePath) ?: return null
+        return runCatching {
+            val keyCol = entry.getString("keyColumn")
+            val enCol  = entry.getString("englishColumn")
+            val langArr = entry.getAsJsonObject("languageColumns")
+            val langMap = langArr?.keySet()?.associateWith { langArr.getString(it) } ?: emptyMap()
+            CsvMapping(
+                keyColumn = keyCol,
+                englishColumn = enCol,
+                languageColumns = langMap,
+                skipEmptyRows   = entry.get("skipEmptyRows")?.asBoolean ?: true,
+                skipSectionRows = entry.get("skipSectionRows")?.asBoolean ?: true,
+            )
+        }.getOrNull()
+    }
+
+    fun saveCsvMapping(filePath: String, mapping: CsvMapping) {
+        val mappings = data.getAsJsonObject(KEY_CSV_MAPPINGS) ?: JsonObject().also { data.add(KEY_CSV_MAPPINGS, it) }
+        val entry = JsonObject().apply {
+            addProperty("keyColumn", mapping.keyColumn)
+            addProperty("englishColumn", mapping.englishColumn)
+            val langObj = JsonObject()
+            mapping.languageColumns.forEach { (col, locale) -> langObj.addProperty(col, locale) }
+            add("languageColumns", langObj)
+            addProperty("skipEmptyRows", mapping.skipEmptyRows)
+            addProperty("skipSectionRows", mapping.skipSectionRows)
+        }
+        mappings.add(filePath, entry)
+        flush()
+    }
+
+    fun removeCsvMapping(filePath: String) {
+        data.getAsJsonObject(KEY_CSV_MAPPINGS)?.remove(filePath)
+        flush()
+    }
+
     // ── Custom locale mapping (user-defined for unrecognized headers) ────────
 
     /** col_name.lowercase() → android_locale. Persisted across sessions. */
@@ -181,5 +221,6 @@ class ConfigPersistence(project: Project) {
         private const val KEY_VALUES_DIR      = "valuesDir"
         private const val KEY_ASSETS_DIR      = "assetsDir"
         private const val KEY_REPORT_DIR      = "reportDir"
+        private const val KEY_CSV_MAPPINGS    = "csvMappings"
     }
 }

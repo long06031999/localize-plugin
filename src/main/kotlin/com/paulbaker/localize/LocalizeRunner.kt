@@ -1,6 +1,7 @@
 package com.paulbaker.localize
 
 import com.paulbaker.localize.config.LocalizeConfig
+import com.paulbaker.localize.core.CsvPreprocessor
 import com.paulbaker.localize.core.JsonLocalizer
 import com.paulbaker.localize.core.TranslationDb
 import com.paulbaker.localize.core.XmlGenerator
@@ -16,13 +17,27 @@ class LocalizeRunner {
         // ── Phase 1: Load CSVs ─────────────────────────────────────────────────
         logger("Phase 1: Loading CSVs...", OutputLevel.INFO)
         val db = TranslationDb()
-        config.csvAndroidOnly?.let {
-            db.loadCsv(it, "android_key", langMap)
-            logger("  ✓ android_only: loaded", OutputLevel.INFO)
+        config.csvAndroidOnly?.let { path ->
+            val mapping = config.csvMappings[path.toString()]
+            if (mapping != null) {
+                val norm = CsvPreprocessor.applyMapping(path, mapping)
+                db.loadCsvFromNormalized(norm.rows, norm.localeOrder)
+                logger("  ✓ android_only: loaded (custom mapping, ${norm.rows.size} rows)", OutputLevel.INFO)
+            } else {
+                db.loadCsv(path, "android_key", langMap)
+                logger("  ✓ android_only: loaded", OutputLevel.INFO)
+            }
         }
-        config.csvOverlap?.let {
-            db.loadCsv(it, "unified_id", langMap)
-            logger("  ✓ overlap: loaded", OutputLevel.INFO)
+        config.csvOverlap?.let { path ->
+            val mapping = config.csvMappings[path.toString()]
+            if (mapping != null) {
+                val norm = CsvPreprocessor.applyMapping(path, mapping)
+                db.loadCsvFromNormalized(norm.rows, norm.localeOrder)
+                logger("  ✓ overlap: loaded (custom mapping, ${norm.rows.size} rows)", OutputLevel.INFO)
+            } else {
+                db.loadCsv(path, "unified_id", langMap)
+                logger("  ✓ overlap: loaded", OutputLevel.INFO)
+            }
         }
         config.csvArrays?.let {
             db.loadArrayCsv(it, langMap)

@@ -107,6 +107,42 @@ class TranslationDb {
         }
     }
 
+    /**
+     * Load a CSV that has been pre-processed by CsvPreprocessor.applyMapping().
+     * Normalized rows format: [android_key, english, lang1_value, lang2_value, ...]
+     * localeOrder: ["es", "ja", "ko", ...] matching the column positions.
+     */
+    fun loadCsvFromNormalized(rows: List<List<String>>, localeOrder: List<String>) {
+        for (row in rows) {
+            val key     = row.getOrNull(0)?.trim() ?: ""
+            val english = row.getOrNull(1)?.trim() ?: ""
+            if (key.isEmpty() && english.isEmpty()) continue
+
+            val trans = localeOrder.mapIndexedNotNull { i, locale ->
+                val v = row.getOrNull(i + 2)?.trim() ?: ""
+                if (v.isNotEmpty()) locale to v else null
+            }.toMap()
+
+            if (key.isNotEmpty()) {
+                val nk = normKey(key)
+                val entry = byKey.getOrPut(nk) { Entry(english) }
+                if (entry.english.isEmpty() && english.isNotEmpty()) byKey[nk] = entry.copy(english = english)
+                trans.forEach { (locale, v) ->
+                    val existing = entry.tr[locale]
+                    if (existing != null && existing != v)
+                        conflicts += Conflict(key, locale, existing, v)
+                    else
+                        entry.tr[locale] = v
+                }
+            }
+            if (english.isNotEmpty()) {
+                val ne = normEn(english)
+                val map = byEn.getOrPut(ne) { mutableMapOf() }
+                trans.forEach { (locale, v) -> map.putIfAbsent(locale, v) }
+            }
+        }
+    }
+
     // ── Lookup ─────────────────────────────────────────────────────────────────
 
     fun lookup(name: String, enText: String, locale: String): String? {

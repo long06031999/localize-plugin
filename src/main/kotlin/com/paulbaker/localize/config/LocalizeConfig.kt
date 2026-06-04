@@ -2,6 +2,18 @@ package com.paulbaker.localize.config
 
 import java.nio.file.Path
 
+/**
+ * User-defined column mapping for a CSV file whose headers don't match the standard format.
+ * Saved per-file in persistence so it's auto-applied on next load.
+ */
+data class CsvMapping(
+    val keyColumn: String,                       // CSV header → android_key
+    val englishColumn: String,                   // CSV header → english text
+    val languageColumns: Map<String, String>,    // CSV header → android locale code
+    val skipEmptyRows: Boolean = true,
+    val skipSectionRows: Boolean = true,         // rows where ≤1 cell is non-empty
+)
+
 enum class GenerateMode {
     /** Keep existing translations for keys not in CSV. Safest for incremental updates. */
     MERGE,
@@ -18,6 +30,7 @@ data class LocalizeConfig(
     val selectedXmlFiles: List<String>,
     val selectedAssets: List<AssetConfig>,
     val generateMode: GenerateMode = GenerateMode.MERGE,
+    val csvMappings: Map<String, CsvMapping> = emptyMap(), // filePath → mapping
     // null = use defaults relative to projectDir
     val valuesDir: Path? = null,
     val assetsDir: Path? = null,

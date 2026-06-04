@@ -104,11 +104,11 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
 
         config.add(section("CSV Files"))
         config.add(vgap(4))
-        config.add(csvRow("android_only_strings.csv", csvAndroidField))
+        config.add(csvRow("android_only_strings.csv", csvAndroidField, showMapBtn = true))
         config.add(vgap(3))
-        config.add(csvRow("overlap.csv  (optional)", csvOverlapField))
+        config.add(csvRow("overlap.csv  (optional)",  csvOverlapField,  showMapBtn = true))
         config.add(vgap(3))
-        config.add(csvRow("array_strings.csv  (optional)", csvArraysField))
+        config.add(csvRow("array_strings.csv  (opt.)", csvArraysField,  showMapBtn = false))
         config.add(vgap(10))
 
         config.add(section("Languages"))
@@ -504,6 +504,12 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
                 .filter { it.value.assetBox.isSelected }
                 .map { (_, r) -> r.config.copy(translateFields = r.selectedFields) },
             generateMode = persistence.generateMode,
+            csvMappings  = buildMap {
+                listOf(csvAndroidField, csvOverlapField).forEach { f ->
+                    val path = f.text.trim().takeIf { it.isNotEmpty() } ?: return@forEach
+                    persistence.getCsvMapping(path)?.let { put(path, it) }
+                }
+            },
             valuesDir    = persistence.valuesDir.takeIf { it.isNotEmpty() }?.let { Paths.get(it) },
             assetsDir    = persistence.assetsDir.takeIf { it.isNotEmpty() }?.let { Paths.get(it) },
             reportDir    = persistence.reportDir.takeIf { it.isNotEmpty() }?.let { Paths.get(it) },
@@ -553,13 +559,35 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
         maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
     }
 
-    private fun csvRow(label: String, picker: TextFieldWithBrowseButton) =
-        JPanel(BorderLayout(6, 0)).apply {
+    private fun csvRow(
+        label: String,
+        picker: com.intellij.openapi.ui.TextFieldWithBrowseButton,
+        showMapBtn: Boolean = false
+    ): JPanel {
+        val mapBtn = if (showMapBtn) JButton(com.intellij.icons.AllIcons.Actions.Edit).apply {
+            isBorderPainted = false; isContentAreaFilled = false
+            preferredSize = Dimension(26, 26)
+            cursor = Cursor(Cursor.HAND_CURSOR)
+            toolTipText = "Configure column mapping for this CSV"
+            addActionListener {
+                val path = Paths.get(picker.text.trim()).takeIf { it.exists() } ?: return@addActionListener
+                val existing = persistence.getCsvMapping(path.toString())
+                val dialog = CsvMappingDialog(project, path, existing)
+                if (dialog.showAndGet()) {
+                    val mapping = dialog.buildMapping()
+                    if (dialog.shouldRemember()) persistence.saveCsvMapping(path.toString(), mapping)
+                }
+            }
+        } else null
+
+        return JPanel(BorderLayout(4, 0)).apply {
             alignmentX = Component.LEFT_ALIGNMENT
             maximumSize = Dimension(Int.MAX_VALUE, 30)
-            add(JBLabel(label).apply { preferredSize = Dimension(180, 26) }, BorderLayout.WEST)
+            add(JBLabel(label).apply { preferredSize = Dimension(200, 26) }, BorderLayout.WEST)
             add(picker, BorderLayout.CENTER)
+            if (mapBtn != null) add(mapBtn, BorderLayout.EAST)
         }
+    }
 
     private fun vgap(h: Int): Component = Box.createRigidArea(Dimension(0, h))
 
