@@ -32,13 +32,14 @@ class LocalizeRunner {
         if (db.conflicts.isNotEmpty())
             logger("  ⚠ ${db.conflicts.size} CSV conflicts (android_only takes priority)", OutputLevel.WARN)
 
-        // Scan CDATA keys from template values dir
-        val valuesDir = config.projectDir.resolve("app/src/main/res/values")
+        val valuesDir = config.resolvedValuesDir()
         val xmlGen = XmlGenerator(db)
         xmlGen.scanCdataKeys(valuesDir)
         // Pass selected assets so XmlGenerator can dynamically detect JSON path strings
         xmlGen.setSelectedAssets(config.selectedAssets)
+        xmlGen.setGenerateMode(config.generateMode)
         val jsonLoc = JsonLocalizer(db)
+        logger("  Mode: ${config.generateMode.name.lowercase().replace('_', ' ')}", OutputLevel.INFO)
 
         val allReports = mutableMapOf<String, LocaleReport>()
 
@@ -52,17 +53,14 @@ class LocalizeRunner {
                 logger("Phase 2: Generating XML for $locale...", OutputLevel.INFO)
                 config.selectedXmlFiles.forEach { xmlFile ->
                     val tmpl = valuesDir.resolve(xmlFile)
-                    val out  = config.projectDir
-                        .resolve("app/src/main/res/values-$locale")
-                        .resolve(xmlFile)
+                    val out  = valuesDir.parent.resolve("values-$locale").resolve(xmlFile)
                     val result = xmlGen.generate(tmpl, out, locale, locale)
-                    logger(
-                        "  [$locale] $xmlFile → ${result.written} written, ${result.skipped} skipped" +
-                            if (result.addedKeys.isNotEmpty()) " (+${result.addedKeys.size} new)" else "",
-                        OutputLevel.INFO
-                    )
+                    val preservedNote = if (result.preserved > 0) ", ${result.preserved} preserved" else ""
+                    val newNote       = if (result.addedKeys.isNotEmpty()) " (+${result.addedKeys.size} new)" else ""
+                    logger("  [$locale] $xmlFile → ${result.written} written, ${result.skipped} skipped$preservedNote$newNote", OutputLevel.INFO)
                     report.xmlWritten    += result.written
                     report.xmlSkipped    += result.skipped
+                    report.xmlPreserved  += result.preserved
                     report.addedKeys     += result.addedKeys
                     report.changedKeys   += result.changedKeys
                     report.skippedArrays += result.skippedArrays
@@ -74,7 +72,7 @@ class LocalizeRunner {
             if (config.selectedAssets.isNotEmpty()) {
                 logger("Phase 3: Generating JSON for $locale...", OutputLevel.INFO)
                 config.selectedAssets.forEach { asset ->
-                    val result = jsonLoc.localize(asset, locale, locale)
+                    val result = jsonLoc.localize(asset, locale, locale, config.generateMode)
                     logger("  [$locale] ${asset.baseFile.substringBeforeLast(".")}_$locale.json", OutputLevel.INFO)
                     report.jsonWritten++
                     report.jsonUnmatched += result.unmatched
@@ -87,7 +85,7 @@ class LocalizeRunner {
         // ── Phase 4: Write reports ─────────────────────────────────────────────
         logger("\nPhase 4: Writing reports...", OutputLevel.INFO)
         allReports.forEach { (locale, report) ->
-            val reportPath = config.projectDir.resolve("localize_report_$locale.md")
+            val reportPath = config.resolvedReportDir().resolve("localize_report_$locale.md")
             reportPath.writeText(report.toMarkdown(db.conflicts), Charsets.UTF_8)
             logger("  [$locale] Report → localize_report_$locale.md", OutputLevel.INFO)
         }
@@ -98,8 +96,9 @@ class LocalizeRunner {
 
 
 class LocaleReport(val locale: String) {
-    var xmlWritten = 0
-    var xmlSkipped = 0
+    var xmlWritten   = 0
+    var xmlSkipped   = 0
+    var xmlPreserved = 0
     val addedKeys    = mutableListOf<String>()
     val changedKeys  = mutableListOf<String>()
     val skippedArrays = mutableListOf<XmlGenerator.SkippedArray>()
@@ -114,8 +113,9 @@ class LocaleReport(val locale: String) {
         sb.appendLine("## Summary\n")
         sb.appendLine("| Metric | Count |")
         sb.appendLine("|---|---|")
-        sb.appendLine("| XML strings written | $xmlWritten |")
-        sb.appendLine("| XML strings skipped | $xmlSkipped |")
+        sb.appendLine("| XML strings written (from CSV) | $xmlWritten |")
+        sb.appendLine("| XML strings preserved (Merge) | $xmlPreserved |")
+        sb.appendLine("| XML strings skipped (no translation) | $xmlSkipped |")
         sb.appendLine("| XML new keys added | ${addedKeys.size} |")
         sb.appendLine("| XML values changed | ${changedKeys.size} |")
         sb.appendLine("| JSON files written | $jsonWritten |")

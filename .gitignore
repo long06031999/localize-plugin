@@ -1,0 +1,23 @@
+# Gradle build cache and outputs
+.gradle/
+build/
+out/
+
+# IntelliJ IDE files
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Kotlin build artifacts
+.kotlin/
+
+# macOS
+.DS_Store
+
+# Local config
+local.properties
+
+# Compiled artifacts (plugin ZIP is generated on demand)
+*.jar
+*.zip

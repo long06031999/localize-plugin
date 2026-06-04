@@ -8,6 +8,7 @@ import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
 import com.vulcanlabs.localize.config.AssetConfig
 import com.vulcanlabs.localize.config.DEFAULT_TRANSLATE_FIELDS
+import com.vulcanlabs.localize.config.GenerateMode
 import java.nio.file.Path
 import kotlin.io.path.exists
 import kotlin.io.path.readText
@@ -20,7 +21,7 @@ class JsonLocalizer(private val db: TranslationDb) {
 
     private val gson = GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create()
 
-    fun localize(asset: AssetConfig, locale: String, suffix: String): JsonResult {
+    fun localize(asset: AssetConfig, locale: String, suffix: String, mode: GenerateMode = GenerateMode.MERGE): JsonResult {
         val basePath = asset.dir.resolve(asset.baseFile)
         if (!basePath.exists()) return JsonResult(emptyList())
 
@@ -28,10 +29,14 @@ class JsonLocalizer(private val db: TranslationDb) {
         val unmatched = mutableListOf<UnmatchedField>()
         val fieldsSet = asset.translateFields.ifEmpty { DEFAULT_TRANSLATE_FIELDS }.toSet()
 
-        // Recursively translate the whole tree; fieldsSet applies at any depth
-        val result = translateElement(root, fieldsSet, locale, asset.name, unmatched)
-
+        // Merge mode: load existing output as fallback for unmatched fields
         val outputPath = asset.dir.resolve("${basePath.toFile().nameWithoutExtension}_$suffix.json")
+        val existingRoot = if (mode == GenerateMode.MERGE && outputPath.exists())
+            runCatching { JsonParser.parseString(outputPath.readText(Charsets.UTF_8)) }.getOrNull()
+        else null
+
+        val result = translateElement(root, fieldsSet, locale, asset.name, unmatched, existingRoot)
+
         outputPath.writeText(gson.toJson(result), Charsets.UTF_8)
         return JsonResult(unmatched)
     }
@@ -45,10 +50,12 @@ class JsonLocalizer(private val db: TranslationDb) {
         fields: Set<String>,
         locale: String,
         ctx: String,
-        unmatched: MutableList<UnmatchedField>
+        unmatched: MutableList<UnmatchedField>,
+        existing: JsonElement? = null   // Merge mode: existing output at same structural position
     ): JsonElement = when {
         el.isJsonObject -> {
             val obj = el.asJsonObject
+            val existingObj = existing?.takeIf { it.isJsonObject }?.asJsonObject
             val out = JsonObject()
             obj.keySet().forEach { key ->
                 val child = obj.get(key)
@@ -58,6 +65,9 @@ class JsonLocalizer(private val db: TranslationDb) {
                             val v = child.asString.takeIf { it.isNotEmpty() }
                             if (v != null) {
                                 val tr = db.lookup("", v, locale)
+                                    ?: existingObj?.get(key)?.takeIf {  // Merge: use existing if no CSV match
+                                        it.isJsonPrimitive && it.asJsonPrimitive.isString && it.asString.isNotEmpty()
+                                    }?.asString
                                 if (tr != null) out.addProperty(key, tr)
                                 else { unmatched += UnmatchedField("$ctx.$key", v); out.add(key, child) }
                             } else out.add(key, child)
@@ -75,18 +85,21 @@ class JsonLocalizer(private val db: TranslationDb) {
                             }
                             out.add(key, translated)
                         }
-                        else -> out.add(key, translateElement(child, fields, locale, "$ctx.$key", unmatched))
+                        else -> out.add(key, translateElement(child, fields, locale, "$ctx.$key", unmatched, existingObj?.get(key)))
                     }
                 } else {
-                    // Recurse into non-selected fields so nested objects are still processed
-                    out.add(key, translateElement(child, fields, locale, "$ctx.$key", unmatched))
+                    out.add(key, translateElement(child, fields, locale, "$ctx.$key", unmatched, existingObj?.get(key)))
                 }
             }
             out
         }
-        el.isJsonArray -> JsonArray().also { out ->
-            el.asJsonArray.forEachIndexed { i, item ->
-                out.add(translateElement(item, fields, locale, "$ctx[$i]", unmatched))
+        el.isJsonArray -> {
+            val existingArr = existing?.takeIf { it.isJsonArray }?.asJsonArray
+            JsonArray().also { out ->
+                el.asJsonArray.forEachIndexed { i, item ->
+                    val existingItem = if (existingArr != null && i < existingArr.size()) existingArr[i] else null
+                    out.add(translateElement(item, fields, locale, "$ctx[$i]", unmatched, existingItem))
+                }
             }
         }
         else -> el

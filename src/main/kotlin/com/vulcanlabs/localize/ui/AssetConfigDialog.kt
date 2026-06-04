@@ -17,7 +17,6 @@ import com.intellij.util.ui.UIUtil
 import com.vulcanlabs.localize.config.AssetConfig
 import com.vulcanlabs.localize.config.DEFAULT_TRANSLATE_FIELDS
 import java.awt.*
-import java.util.concurrent.CancellationException
 import javax.swing.*
 import javax.swing.text.SimpleAttributeSet
 import javax.swing.text.StyleConstants
@@ -46,7 +45,9 @@ class AssetConfigDialog(
     private var parsedBase: JsonElement? = null
     private var parsedTranslated: JsonElement? = null
 
-    private var activeWorker: SwingWorker<*, *>? = null
+    // Generation counter: only the latest load's result is accepted.
+    // Prevents stale background results from overwriting newer data when switching locales quickly.
+    private var loadGeneration = 0
     private var pendingRefresh: Timer? = null
 
     init {
@@ -143,35 +144,34 @@ class AssetConfigDialog(
     // ── Background loading ─────────────────────────────────────────────────────
 
     private fun startLoad() {
-        activeWorker?.cancel(true)
+        // Increment generation — any in-flight load with a smaller number is stale
+        val gen           = ++loadGeneration
+        val localeSnapshot = currentLocale        // capture on EDT before switching to pool thread
+
+        parsedTranslated = null                   // clear stale data immediately
         setLoadingText()
 
-        val worker = object : SwingWorker<Pair<JsonElement?, JsonElement?>, Void>() {
-            override fun doInBackground(): Pair<JsonElement?, JsonElement?> {
-                val base = loadAndParse(asset.dir.resolve(asset.baseFile))
-                val translated = loadAndParse(
-                    asset.dir.resolve(
-                        "${asset.dir.resolve(asset.baseFile).nameWithoutExtension}_$currentLocale.json"
-                    )
-                )
-                return base to translated
-            }
+        val basePath       = asset.dir.resolve(asset.baseFile)
+        val translatedPath = asset.dir.resolve(
+            "${basePath.toFile().nameWithoutExtension}_$localeSnapshot.json"
+        )
 
-            override fun done() {
-                if (isCancelled) return
-                try {
-                    val (base, translated) = get()
-                    parsedBase = base
+        // Run file I/O on pool thread, then update UI back on EDT.
+        // SwingUtilities.invokeLater is used (not ApplicationManager.invokeLater) because
+        // ApplicationManager's version respects ModalityState and won't fire inside modal dialogs.
+        val app = com.intellij.openapi.application.ApplicationManager.getApplication()
+        app.executeOnPooledThread {
+            val base       = loadAndParse(basePath)
+            val translated = loadAndParse(translatedPath)
+
+            javax.swing.SwingUtilities.invokeLater {
+                if (gen == loadGeneration) {
+                    parsedBase       = base
                     parsedTranslated = translated
                     renderBoth()
-                } catch (_: CancellationException) {
-                } catch (ex: Exception) {
-                    appendError(leftPane, "Error: ${ex.message}")
                 }
             }
         }
-        activeWorker = worker
-        worker.execute()
     }
 
     private fun loadAndParse(path: java.nio.file.Path): JsonElement? {
@@ -190,13 +190,12 @@ class AssetConfigDialog(
 
     // ── Rendering ─────────────────────────────────────────────────────────────
 
-    /** Debounce: wait 120ms after last checkbox change, then re-render in background. */
+    /** Debounce: wait 120ms after last checkbox change. Only renders if load is complete. */
     private fun schedulePreviewRefresh() {
         pendingRefresh?.stop()
         pendingRefresh = Timer(120) {
-            val selected = fieldBoxes.filter { it.value.isSelected }.keys.toSet()
-            // Merge is lightweight — do it on EDT if data already loaded
-            if (parsedBase != null) renderBoth()
+            // Only render if data is fully loaded (parsedTranslated is null = still loading)
+            if (parsedBase != null && parsedTranslated != null) renderBoth()
         }.also { it.isRepeats = false; it.start() }
     }
 
@@ -325,7 +324,8 @@ class AssetConfigDialog(
     }
 
     override fun doCancelAction() {
-        activeWorker?.cancel(true)
+        // Invalidate any pending load by incrementing generation
+        loadGeneration++
         pendingRefresh?.stop()
         super.doCancelAction()
     }

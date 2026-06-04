@@ -127,6 +127,32 @@ class ConfigPersistence(project: Project) {
         add(key, arr)
     }
 
+    // ── Generate mode ─────────────────────────────────────────────────────────
+
+    var generateMode: GenerateMode
+        get() = when (data.getString(KEY_GENERATE_MODE)) {
+            "FULL_REPLACE" -> GenerateMode.FULL_REPLACE
+            else           -> GenerateMode.MERGE   // default: safe merge
+        }
+        set(v) { data.addProperty(KEY_GENERATE_MODE, v.name); flush() }
+
+    // ── Directory overrides ───────────────────────────────────────────────────
+
+    /** Custom values/ directory. Empty = use default (app/src/main/res/values). */
+    var valuesDir: String
+        get() = data.getString(KEY_VALUES_DIR)
+        set(v) { data.addProperty(KEY_VALUES_DIR, v); flush() }
+
+    /** Custom assets/ directory. Empty = use default (app/src/main/assets). */
+    var assetsDir: String
+        get() = data.getString(KEY_ASSETS_DIR)
+        set(v) { data.addProperty(KEY_ASSETS_DIR, v); flush() }
+
+    /** Custom report output directory. Empty = use project root. */
+    var reportDir: String
+        get() = data.getString(KEY_REPORT_DIR)
+        set(v) { data.addProperty(KEY_REPORT_DIR, v); flush() }
+
     // ── Custom locale mapping (user-defined for unrecognized headers) ────────
 
     /** col_name.lowercase() → android_locale. Persisted across sessions. */
@@ -150,6 +176,10 @@ class ConfigPersistence(project: Project) {
         private const val KEY_XML_FILES      = "checkedXmlFiles"
         private const val KEY_ASSETS         = "checkedAssets"
         private const val KEY_ASSET_FIELDS   = "assetFields"
-        private const val KEY_CUSTOM_LOCALES = "customLocaleMap"
+        private const val KEY_CUSTOM_LOCALES  = "customLocaleMap"
+        private const val KEY_GENERATE_MODE   = "generateMode"
+        private const val KEY_VALUES_DIR      = "valuesDir"
+        private const val KEY_ASSETS_DIR      = "assetsDir"
+        private const val KEY_REPORT_DIR      = "reportDir"
     }
 }

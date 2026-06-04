@@ -13,6 +13,7 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import com.vulcanlabs.localize.LocalizeRunner
 import com.vulcanlabs.localize.config.*
+import com.vulcanlabs.localize.config.GenerateMode
 import com.vulcanlabs.localize.core.JsonLocalizer
 import com.vulcanlabs.localize.core.TranslationDb
 import java.awt.*
@@ -60,11 +61,25 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
     // Log output
     val outputPanel = LocalizeOutputPanel()
 
-    // Generate button — no custom colors, use IDE theme defaults
+    // Fixed top bar buttons
     private val generateBtn = JButton("Generate").apply {
         font = font.deriveFont(Font.BOLD, 13f)
         preferredSize = Dimension(120, 30)
         addActionListener { onGenerate() }
+    }
+    private val settingsBtn = JButton(com.intellij.icons.AllIcons.General.Settings).apply {
+        isBorderPainted      = false
+        isContentAreaFilled  = false
+        preferredSize        = Dimension(30, 30)
+        cursor               = Cursor(Cursor.HAND_CURSOR)
+        toolTipText          = "Settings"
+        addActionListener {
+            // Pass the SAME persistence instance so SettingsDialog writes to the same in-memory data
+            val dialog = SettingsDialog(project, projectDir, persistence)
+            dialog.showAndGet()
+            scanXmlFiles() // re-scan in case valuesDir changed
+            scanAssets()   // re-scan in case assetsDir changed
+        }
     }
 
     init {
@@ -75,18 +90,17 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
     // ── Layout ────────────────────────────────────────────────────────────────
 
     private fun buildUI() {
-        // ── Config panel (top) ─────────────────────────────────────────────────
-        val config = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
-        config.border = JBUI.Borders.empty(8, 10)
-
-        // Generate button at the top
-        val btnRow = JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
-            alignmentX = Component.LEFT_ALIGNMENT
-            maximumSize = Dimension(Int.MAX_VALUE, 36)
-            add(generateBtn)
+        // ── Fixed top bar (Generate + Settings) — not inside scroll ────────────
+        val topBar = JPanel(BorderLayout(8, 0)).apply {
+            border = JBUI.Borders.empty(6, 10, 4, 10)
+            add(generateBtn, BorderLayout.WEST)
+            add(settingsBtn, BorderLayout.EAST)
         }
-        config.add(btnRow)
-        config.add(vgap(8))
+        add(topBar, BorderLayout.NORTH)
+
+        // ── Scrollable config panel ────────────────────────────────────────────
+        val config = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
+        config.border = JBUI.Borders.empty(4, 10, 8, 10)
 
         config.add(section("CSV Files"))
         config.add(vgap(4))
@@ -260,7 +274,8 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
     }
 
     private fun scanXmlFiles() {
-        val valuesDir = projectDir.resolve("app/src/main/res/values").toFile()
+        val customValues = persistence.valuesDir.takeIf { it.isNotEmpty() }?.let { Paths.get(it) }
+        val valuesDir = (customValues ?: projectDir.resolve("app/src/main/res/values")).toFile()
         if (!valuesDir.exists()) return
         val saved = persistence.checkedXmlFiles
         xmlRow.removeAll(); xmlBoxes.clear()
@@ -278,7 +293,8 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
 
     // Data class for ignored (hidden) assets
     private fun scanAssets() {
-        val assetsDir = projectDir.resolve("app/src/main/assets").toFile()
+        val customAssets = persistence.assetsDir.takeIf { it.isNotEmpty() }?.let { Paths.get(it) }
+        val assetsDir = (customAssets ?: projectDir.resolve("app/src/main/assets")).toFile()
         if (!assetsDir.exists()) return
         val savedAssets = persistence.checkedAssets
         val savedFields = persistence.assetFields
@@ -486,10 +502,13 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
             selectedXmlFiles  = xmlBoxes.filter { it.value.isSelected }.keys.toList(),
             selectedAssets    = assetRows
                 .filter { it.value.assetBox.isSelected }
-                .map { (_, r) -> r.config.copy(translateFields = r.selectedFields) }
+                .map { (_, r) -> r.config.copy(translateFields = r.selectedFields) },
+            generateMode = persistence.generateMode,
+            valuesDir    = persistence.valuesDir.takeIf { it.isNotEmpty() }?.let { Paths.get(it) },
+            assetsDir    = persistence.assetsDir.takeIf { it.isNotEmpty() }?.let { Paths.get(it) },
+            reportDir    = persistence.reportDir.takeIf { it.isNotEmpty() }?.let { Paths.get(it) },
         )
 
-        // Save config
         persistence.saveAll(
             androidOnly = csvAndroidField.text,
             overlap     = csvOverlapField.text,

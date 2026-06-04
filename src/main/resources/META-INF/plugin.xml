@@ -1,4 +1,4 @@
-<idea-plugin>
+<idea-plugin dynamic="true">
     <id>com.vulcanlabs.localize</id>
     <name>Localize Tool</name>
     <vendor>Long Ba Nguyen Vulcanlabs</vendor>

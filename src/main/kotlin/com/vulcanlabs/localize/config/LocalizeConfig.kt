@@ -2,6 +2,13 @@ package com.vulcanlabs.localize.config
 
 import java.nio.file.Path
 
+enum class GenerateMode {
+    /** Keep existing translations for keys not in CSV. Safest for incremental updates. */
+    MERGE,
+    /** Overwrite entirely from CSV — existing translations not in CSV are lost. */
+    FULL_REPLACE
+}
+
 data class LocalizeConfig(
     val csvAndroidOnly: Path?,
     val csvOverlap: Path?,
@@ -9,8 +16,17 @@ data class LocalizeConfig(
     val projectDir: Path,
     val selectedLanguages: Map<String, String>,  // csv_column_name → android_locale
     val selectedXmlFiles: List<String>,
-    val selectedAssets: List<AssetConfig>
-)
+    val selectedAssets: List<AssetConfig>,
+    val generateMode: GenerateMode = GenerateMode.MERGE,
+    // null = use defaults relative to projectDir
+    val valuesDir: Path? = null,
+    val assetsDir: Path? = null,
+    val reportDir: Path? = null,
+) {
+    fun resolvedValuesDir() = valuesDir ?: projectDir.resolve("app/src/main/res/values")
+    fun resolvedAssetsDir() = assetsDir ?: projectDir.resolve("app/src/main/assets")
+    fun resolvedReportDir() = reportDir ?: projectDir
+}
 
 data class AssetConfig(
     val name: String,
