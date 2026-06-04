@@ -22,10 +22,10 @@ import javax.swing.text.StyleConstants
 class LocalizeToolWindowFactory : ToolWindowFactory, DumbAware {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         try {
-            val panel = LocalizePanel(project)
-            val content = ContentFactory.getInstance().createContent(panel, "", false)
+            val main = MainPanel(project)
+            val content = ContentFactory.getInstance().createContent(main, "", false)
             toolWindow.contentManager.addContent(content)
-            project.putUserData(LocalizeOutputPanel.KEY, panel.outputPanel)
+            project.putUserData(LocalizeOutputPanel.KEY, main.localizePanel.outputPanel)
         } catch (ex: Exception) {
             // Fallback: show error message so the tool window is never blank
             val errPanel = javax.swing.JPanel(java.awt.BorderLayout()).apply {

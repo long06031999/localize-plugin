@@ -193,6 +193,38 @@ class ConfigPersistence(project: Project) {
         flush()
     }
 
+    var exportLocales: List<String>
+        get() = data.getStringList(KEY_EXPORT_LOCALES)
+        set(v) { data.putStringList(KEY_EXPORT_LOCALES, v); flush() }
+
+    var exportXmlFiles: List<String>
+        get() = data.getStringList(KEY_EXPORT_XML_FILES)
+        set(v) { data.putStringList(KEY_EXPORT_XML_FILES, v); flush() }
+
+    var exportOutputPath: String
+        get() = data.getString(KEY_EXPORT_OUTPUT_PATH)
+        set(v) { data.addProperty(KEY_EXPORT_OUTPUT_PATH, v); flush() }
+
+    // ── Export tool: per-asset field config (separate from Localize tool) ────
+
+    var exportAssetFields: Map<String, List<String>>
+        get() {
+            val obj = data.getAsJsonObject(KEY_EXPORT_ASSET_FIELDS) ?: return emptyMap()
+            return obj.keySet().associateWith { key ->
+                obj.getAsJsonArray(key)?.map { it.asString } ?: emptyList()
+            }
+        }
+        set(v) {
+            val obj = JsonObject()
+            v.forEach { (name, fields) ->
+                val arr = com.google.gson.JsonArray()
+                fields.forEach { arr.add(it) }
+                obj.add(name, arr)
+            }
+            data.add(KEY_EXPORT_ASSET_FIELDS, obj)
+            flush()
+        }
+
     // ── Custom locale mapping (user-defined for unrecognized headers) ────────
 
     /** col_name.lowercase() → android_locale. Persisted across sessions. */
@@ -216,6 +248,10 @@ class ConfigPersistence(project: Project) {
         private const val KEY_XML_FILES      = "checkedXmlFiles"
         private const val KEY_ASSETS         = "checkedAssets"
         private const val KEY_ASSET_FIELDS   = "assetFields"
+        private const val KEY_EXPORT_ASSET_FIELDS  = "exportAssetFields"
+        private const val KEY_EXPORT_OUTPUT_PATH   = "exportOutputPath"
+        private const val KEY_EXPORT_XML_FILES     = "exportXmlFiles"
+        private const val KEY_EXPORT_LOCALES       = "exportLocales"
         private const val KEY_CUSTOM_LOCALES  = "customLocaleMap"
         private const val KEY_GENERATE_MODE   = "generateMode"
         private const val KEY_VALUES_DIR      = "valuesDir"

@@ -10,6 +10,10 @@ repositories {
     mavenCentral()
 }
 
+dependencies {
+    implementation("org.apache.poi:poi-ooxml:5.2.3")
+}
+
 intellij {
     version.set("2024.1")
     type.set("IC")

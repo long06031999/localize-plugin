@@ -64,7 +64,17 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
     // Log output
     val outputPanel = LocalizeOutputPanel()
 
+    // Set by MainPanel after construction
+    var mainPanel: MainPanel? = null
+
     // Fixed top bar buttons
+    private val backBtn = JButton(com.intellij.icons.AllIcons.Actions.Back).apply {
+        isBorderPainted = false; isContentAreaFilled = false
+        preferredSize   = Dimension(30, 30)
+        cursor          = Cursor(Cursor.HAND_CURSOR)
+        toolTipText     = "Back to dashboard"
+        addActionListener { mainPanel?.navigateTo("dashboard") }
+    }
     private val generateBtn = JButton("Generate").apply {
         font = font.deriveFont(Font.BOLD, 13f)
         preferredSize = Dimension(120, 30)
@@ -100,7 +110,10 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
         // ── Fixed top bar (Generate + Settings) — not inside scroll ────────────
         val topBar = JPanel(BorderLayout(8, 0)).apply {
             border = JBUI.Borders.empty(6, 10, 4, 10)
-            add(generateBtn, BorderLayout.WEST)
+            val leftBar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+                isOpaque = false; add(backBtn); add(generateBtn)
+            }
+            add(leftBar,    BorderLayout.WEST)
             add(settingsBtn, BorderLayout.EAST)
         }
         add(topBar, BorderLayout.NORTH)
