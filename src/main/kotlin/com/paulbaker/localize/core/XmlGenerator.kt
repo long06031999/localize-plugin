@@ -87,7 +87,11 @@ class XmlGenerator(private val db: TranslationDb) {
             child = child.nextSibling
         }
 
-        if (written + preserved == 0) return XmlResult(0, skipped, 0, emptyList(), emptyList(), skippedArrays, notFound)
+        // Merge: skip writing if nothing was found (avoid creating empty files on first run)
+        // Full Replace: always write to overwrite existing file with only what CSV provides
+        if (written + preserved == 0 && generateMode == GenerateMode.MERGE) {
+            return XmlResult(0, skipped, 0, emptyList(), emptyList(), skippedArrays, notFound)
+        }
 
         lines += "</resources>"
         outputPath.parent.toFile().mkdirs()
@@ -111,7 +115,7 @@ class XmlGenerator(private val db: TranslationDb) {
         if (elem.getAttribute("translatable") == "false") return Triple(0, 0, 0)
         val name = elem.getAttribute("name")
 
-        // Dynamic JSON path detection
+        // Dynamic JSON path detection: asset IS selected → generate localized path
         val elemValue = elem.textContent?.trim() ?: ""
         val matchedAsset = selectedAssets.firstOrNull { asset ->
             val dirName = asset.dir.fileName.toString()
@@ -128,26 +132,47 @@ class XmlGenerator(private val db: TranslationDb) {
         }
 
         val enFromDb   = db.byKey[db.normKey(name)]?.english ?: ""
-        val enFromElem = elem.textContent?.trim() ?: ""
+        val enFromElem = elemValue
         val enText     = enFromDb.ifEmpty { enFromElem }
 
-        val translation = db.lookup(name, enText, locale)
-        if (!translation.isNullOrBlank()) {
-            val valStr = if (name in cdataKeys || '<' in translation)
-                "<![CDATA[$translation]]>"
-            else
-                escapeXmlValue(translation)
-            lines += """    <string name="$name">$valStr</string>"""
-            newValues[name] = translation
-            return Triple(1, 0, 0)
+        // JSON path strings (e.g. "task/tasks.json") must NEVER be taken from the CSV —
+        // the CSV may contain the non-localized base path which would override the Merge fallback.
+        // Only the dynamic asset detection above (or existing file) should determine their value.
+        val isJsonPathString = JSON_PATH_PATTERN.matches(elemValue)
+
+        if (!isJsonPathString) {
+            val translation = db.lookup(name, enText, locale)
+            if (!translation.isNullOrBlank()) {
+                val valStr = if (name in cdataKeys || '<' in translation)
+                    "<![CDATA[$translation]]>"
+                else
+                    escapeXmlValue(translation)
+                lines += """    <string name="$name">$valStr</string>"""
+                newValues[name] = translation
+                return Triple(1, 0, 0)
+            }
         }
 
         // Merge mode: fall back to existing translation from previous run
         val existing = existingValues[name]
         if (!existing.isNullOrBlank()) {
-            val valStr = if ('<' in existing) "<![CDATA[$existing]]>" else existing
+            val valStr = if (name in cdataKeys || '<' in existing)
+                "<![CDATA[$existing]]>"
+            else
+                escapeXmlValue(existing)
             lines += """    <string name="$name">$valStr</string>"""
             return Triple(0, 0, 1)   // preserved
+        }
+
+        // JSON path strings must NEVER be skipped — they are infrastructure strings.
+        // If no existing value (Full Replace / first run), generate the localized path
+        // directly from the base path pattern: "task/tasks.json" → "task/tasks_{suffix}.json"
+        if (isJsonPathString) {
+            val localizedPath = buildLocalizedJsonPath(elemValue, suffix)
+            val target = localizedPath ?: elemValue   // fallback to base path if pattern unrecognized
+            lines += """    <string name="$name">$target</string>"""
+            newValues[name] = target
+            return Triple(1, 0, 0)
         }
 
         notFound += NotFound(name, enText)
@@ -201,7 +226,8 @@ class XmlGenerator(private val db: TranslationDb) {
             // Merge mode: if the existing output file has this full array, preserve it
             val existingBlock = existingValues["__array__$arrayName"]
             if (existingBlock != null) {
-                lines += existingBlock
+                // trimStart() in parseExistingXml stripped the leading 4-space indent — restore it
+                lines += "    $existingBlock"
                 return ArrayResult(1, 0, null)
             }
             val sa = SkippedArray(arrayName, okItems.size, totalItems, missing)
@@ -284,6 +310,21 @@ class XmlGenerator(private val db: TranslationDb) {
     }
 
     companion object {
+        // Matches JSON asset path strings like "task/tasks.json", "whats_new/whats_new.json"
+        // These must never be sourced from the CSV — only from dynamic asset detection or Merge fallback
+        private val JSON_PATH_PATTERN = Regex("""^[\w][\w_-]*/[\w][\w_-]*\.json$""")
+
+        /** "task/tasks.json" + suffix "th" → "task/tasks_th.json". Returns null if pattern not recognized. */
+        fun buildLocalizedJsonPath(basePath: String, suffix: String): String? {
+            val slash = basePath.indexOf('/')
+            if (slash < 0) return null
+            val dir  = basePath.substring(0, slash)
+            val file = basePath.substring(slash + 1)
+            if (!file.endsWith(".json")) return null
+            val stem = file.dropLast(5)
+            return "$dir/${stem}_$suffix.json"
+        }
+
         fun escapeXmlValue(s: String): String {
             var r = s
             r = r.replace(Regex("&(?!amp;|lt;|gt;|apos;|quot;|#)"), "&amp;")

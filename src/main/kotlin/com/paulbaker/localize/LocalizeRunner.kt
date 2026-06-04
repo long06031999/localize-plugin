@@ -39,9 +39,17 @@ class LocalizeRunner {
                 logger("  ✓ overlap: loaded", OutputLevel.INFO)
             }
         }
-        config.csvArrays?.let {
-            db.loadArrayCsv(it, langMap)
-            logger("  ✓ arrays: loaded (${db.byArray.size} arrays)", OutputLevel.INFO)
+        config.csvArrays?.let { path ->
+            val mapping = config.csvMappings[path.toString()]
+            if (mapping != null) {
+                // Custom mapping: normalize columns first, then apply sparse array logic
+                val norm = CsvPreprocessor.applyMapping(path, mapping)
+                db.loadArrayCsvFromNormalized(norm.rows, norm.localeOrder)
+                logger("  ✓ arrays: loaded (custom mapping, ${db.byArray.size} arrays)", OutputLevel.INFO)
+            } else {
+                db.loadArrayCsv(path, langMap)
+                logger("  ✓ arrays: loaded (${db.byArray.size} arrays)", OutputLevel.INFO)
+            }
         }
         logger("  DB: ${db.byKey.size} unique keys, ${db.byEn.size} English phrases", OutputLevel.INFO)
         if (db.conflicts.isNotEmpty())

@@ -143,6 +143,34 @@ class TranslationDb {
         }
     }
 
+    /**
+     * Load a mapped arrays CSV using sparse array logic.
+     * Input: normalized rows from CsvPreprocessor.applyMapping() —
+     *   format: [android_key_or_empty, english, lang1_value, lang2_value, ...]
+     * The key column may be: array_name (first row of group) OR empty (subsequent items).
+     * localeOrder: locale codes in column order.
+     */
+    fun loadArrayCsvFromNormalized(rows: List<List<String>>, localeOrder: List<String>) {
+        var currentArray: String? = null
+        for (row in rows) {
+            val key     = row.getOrNull(0)?.trim() ?: ""
+            val english = row.getOrNull(1)?.trim() ?: ""
+            // Carry forward the array name when key is empty (sparse format)
+            if (key.isNotEmpty()) currentArray = normKey(key)
+            val arr = currentArray ?: continue
+            if (english.isEmpty()) continue
+            val trans = localeOrder.mapIndexedNotNull { i, locale ->
+                val v = row.getOrNull(i + 2)?.trim() ?: ""
+                if (v.isNotEmpty()) locale to v else null
+            }.toMap()
+            if (trans.isEmpty()) continue
+            val ne = normEn(english)
+            val arrMap = byArray.getOrPut(arr) { mutableMapOf() }
+            val locMap = arrMap.getOrPut(ne) { mutableMapOf() }
+            trans.forEach { (locale, v) -> locMap.putIfAbsent(locale, v) }
+        }
+    }
+
     // ── Lookup ─────────────────────────────────────────────────────────────────
 
     fun lookup(name: String, enText: String, locale: String): String? {

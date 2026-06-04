@@ -32,9 +32,12 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
     private val csvOverlapField  = createFilePicker()
     private val csvArraysField   = createFilePicker()
 
-    // Language checkboxes
+    // Language checkboxes — keyed by locale code (e.g. "ko")
     private val languageBoxes = mutableMapOf<String, JBCheckBox>()
     private val languageRow   = JPanel(WrapLayout(FlowLayout.LEFT, 8, 4))
+    // Maps locale → original CSV column name (e.g. "ko" → "Korean").
+    // Used to build langMap for loadCsv/loadArrayCsv so they can find the right column.
+    private val localeToColumnName = mutableMapOf<String, String>()
 
     // XML checkboxes
     private val xmlBoxes = mutableMapOf<String, JBCheckBox>()
@@ -74,11 +77,15 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
         cursor               = Cursor(Cursor.HAND_CURSOR)
         toolTipText          = "Settings"
         addActionListener {
+            // Snapshot dir settings BEFORE dialog opens
+            val prevValuesDir = persistence.valuesDir
+            val prevAssetsDir = persistence.assetsDir
             // Pass the SAME persistence instance so SettingsDialog writes to the same in-memory data
             val dialog = SettingsDialog(project, projectDir, persistence)
             dialog.showAndGet()
-            scanXmlFiles() // re-scan in case valuesDir changed
-            scanAssets()   // re-scan in case assetsDir changed
+            // Only re-scan if the relevant directory actually changed — avoids resetting asset tick state
+            if (persistence.valuesDir != prevValuesDir) scanXmlFiles()
+            if (persistence.assetsDir != prevAssetsDir) scanAssets()
         }
     }
 
@@ -108,7 +115,7 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
         config.add(vgap(3))
         config.add(csvRow("overlap.csv  (optional)",  csvOverlapField,  showMapBtn = true))
         config.add(vgap(3))
-        config.add(csvRow("array_strings.csv  (opt.)", csvArraysField,  showMapBtn = false))
+        config.add(csvRow("array_strings.csv  (optional)", csvArraysField,  showMapBtn = true))
         config.add(vgap(10))
 
         config.add(section("Languages"))
@@ -174,49 +181,165 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
             }
         }
 
-        Paths.get(csvAndroidField.text.trim()).takeIf { it.exists() }?.let { detectLanguages(it) }
+        refreshLanguages()
         scanXmlFiles()
         scanAssets()
 
-        csvAndroidField.textField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
-            override fun insertUpdate(e: javax.swing.event.DocumentEvent)  = redetect()
-            override fun removeUpdate(e: javax.swing.event.DocumentEvent)  = redetect()
-            override fun changedUpdate(e: javax.swing.event.DocumentEvent) = redetect()
-            private fun redetect() {
-                Paths.get(csvAndroidField.text.trim()).takeIf { it.exists() }?.let { detectLanguages(it) }
+        // Re-detect languages whenever ANY csv field changes
+        listOf(csvAndroidField, csvOverlapField, csvArraysField).forEach { field ->
+            field.textField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
+                override fun insertUpdate(e: javax.swing.event.DocumentEvent)  = refreshLanguages()
+                override fun removeUpdate(e: javax.swing.event.DocumentEvent)  = refreshLanguages()
+                override fun changedUpdate(e: javax.swing.event.DocumentEvent) = refreshLanguages()
+            })
+        }
+    }
+
+    /**
+     * Merge languages from ALL three CSV fields into one unified Languages section.
+     * Each field may have its own saved column mapping.
+     */
+    private fun refreshLanguages() {
+        // Deduplicate by LOCALE CODE: locale → best_display_key
+        // Prefer descriptive names (e.g. "Korean") over raw ISO codes (e.g. "ko")
+        val byLocale = linkedMapOf<String, String>()  // locale → display_key
+        val unresolved = mutableListOf<String>()
+
+        listOf(csvAndroidField, csvOverlapField, csvArraysField).forEach { field ->
+            val path = Paths.get(field.text.trim()).takeIf { it.toFile().isFile } ?: return@forEach
+            val mapping = persistence.getCsvMapping(path.toString())
+            if (mapping != null) {
+                // Saved mapping: locale code as both key and display
+                mapping.languageColumns.forEach { (_, locale) ->
+                    if (!byLocale.containsKey(locale)) byLocale[locale] = locale
+                    // Don't overwrite if already have a descriptive name for this locale
+                }
+            } else {
+                // Standard header detection
+                TranslationDb().readHeaders(path)
+                    .filter { it.isNotEmpty() && it.lowercase() !in NON_LANGUAGE_COLS }
+                    .forEach { col ->
+                        val locale = resolveLocale(col) ?: persistence.customLocaleMap[col.lowercase()]
+                        if (locale != null) {
+                            // Prefer column name (e.g. "Korean") over plain locale code (e.g. "ko")
+                            val existing = byLocale[locale]
+                            if (existing == null || existing == locale) {
+                                byLocale[locale] = col   // descriptive name wins
+                            }
+                        } else if (col !in unresolved) {
+                            unresolved += col
+                        }
+                    }
             }
-        })
+        }
+
+        languageRow.removeAll(); languageBoxes.clear()
+        localeToColumnName.clear()
+        val saved = persistence.checkedLanguages.map { it.lowercase() }
+
+        // languageBoxes key = locale code (ensures uniqueness)
+        // localeToColumnName: locale → CSV column name (needed for loadCsv/loadArrayCsv to find right column)
+        byLocale.forEach { (locale, displayKey) ->
+            // displayKey is the CSV column name (e.g. "Korean") when from standard CSV,
+            // or the locale code itself (e.g. "ko") when from a mapped CSV.
+            localeToColumnName[locale] = displayKey
+
+            val label = if (displayKey == locale) locale
+                        else "${displayKey.replaceFirstChar { it.uppercase() }} ($locale)"
+            languageBoxes[locale] = JBCheckBox(label).apply {
+                isSelected = saved.isEmpty() || locale in saved || displayKey.lowercase() in saved
+                font = font.deriveFont(13f)
+            }
+            languageRow.add(languageBoxes[locale])
+        }
+
+        // Show unresolved hint only if there are many (not inline inputs)
+        if (unresolved.isNotEmpty() && byLocale.isEmpty()) {
+            languageRow.add(JBLabel("  ${unresolved.size} unrecognized columns — click ✏ to map").apply {
+                foreground = UIUtil.getContextHelpForeground()
+                font = font.deriveFont(Font.ITALIC, 11f)
+            })
+        } else if (unresolved.isNotEmpty() && unresolved.size <= 3) {
+            languageRow.add(JBLabel("  |  Unknown:").apply {
+                foreground = UIUtil.getContextHelpForeground(); font = font.deriveFont(Font.ITALIC, 11f)
+            })
+            unresolved.forEach { col ->
+                val field = javax.swing.JTextField(6).apply { font = font.deriveFont(12f) }
+                val confirm: () -> Unit = confirm@{
+                    val code = field.text.trim().lowercase()
+                    if (code.isEmpty()) return@confirm
+                    persistence.customLocaleMap = persistence.customLocaleMap.toMutableMap().also { it[col.lowercase()] = code }
+                    refreshLanguages()
+                }
+                field.addActionListener { confirm() }
+                field.addFocusListener(object : java.awt.event.FocusAdapter() {
+                    override fun focusLost(e: java.awt.event.FocusEvent) = confirm()
+                })
+                languageRow.add(JBLabel("\"$col\" →").apply {
+                    foreground = UIUtil.getContextHelpForeground(); font = font.deriveFont(Font.ITALIC, 11f)
+                })
+                languageRow.add(field)
+            }
+        }
+
+        languageRow.revalidate(); languageRow.repaint()
     }
 
     private fun detectLanguages(csvPath: Path) {
+        languageRow.removeAll(); languageBoxes.clear()
+        val saved = persistence.checkedLanguages.map { it.lowercase() }
+
+        // ── Priority 1: CSV has a saved column mapping → use its language columns ──
+        val mapping = persistence.getCsvMapping(csvPath.toString())
+        if (mapping != null) {
+            mapping.languageColumns.forEach { (_, locale) ->
+                val label = locale  // just show the locale code
+                languageBoxes[locale] = JBCheckBox(locale).apply {
+                    isSelected = saved.isEmpty() || locale in saved
+                    font = font.deriveFont(13f)
+                }
+                languageRow.add(languageBoxes[locale])
+            }
+            if (mapping.languageColumns.isEmpty()) {
+                languageRow.add(JBLabel("  No languages mapped — click ✏ to configure").apply {
+                    foreground = UIUtil.getContextHelpForeground()
+                    font = font.deriveFont(Font.ITALIC, 11f)
+                })
+            }
+            languageRow.revalidate(); languageRow.repaint()
+            return
+        }
+
+        // ── Priority 2: Standard detection (known language names / ISO codes) ──
         val allHeaders = TranslationDb().readHeaders(csvPath)
             .filter { it.isNotEmpty() && it.lowercase() !in NON_LANGUAGE_COLS }
 
-        val resolved   = mutableMapOf<String, String>()  // col → android_locale
+        val resolved   = mutableMapOf<String, String>()
         val unresolved = mutableListOf<String>()
 
         allHeaders.forEach { col ->
-            val locale = resolveLocale(col)
-                ?: persistence.customLocaleMap[col.lowercase()]   // Strategy 4: persisted custom
+            val locale = resolveLocale(col) ?: persistence.customLocaleMap[col.lowercase()]
             if (locale != null) resolved[col] = locale
             else unresolved += col
         }
 
-        languageRow.removeAll(); languageBoxes.clear()
-        val saved = persistence.checkedLanguages.map { it.lowercase() }
-
-        // ── Resolved checkboxes ────────────────────────────────────────────
         resolved.forEach { (col, locale) ->
-            val label = "${col.replaceFirstChar { it.uppercase() }} ($locale)"
-            languageBoxes[col] = JBCheckBox(label).apply {
+            languageBoxes[col] = JBCheckBox("${col.replaceFirstChar { it.uppercase() }} ($locale)").apply {
                 isSelected = saved.isEmpty() || col.lowercase() in saved
                 font = font.deriveFont(13f)
             }
             languageRow.add(languageBoxes[col])
         }
 
-        // ── Unrecognized headers — show with text input ────────────────────
-        if (unresolved.isNotEmpty()) {
+        // ── Unresolved: only show if there are ALSO resolved ones (clean CSV with a few unknowns) ──
+        // For heavily noisy CSVs (many unresolved), suppress inline inputs and show a hint instead
+        val showInline = unresolved.isNotEmpty() && (resolved.isNotEmpty() || unresolved.size <= 3)
+        if (unresolved.isNotEmpty() && !showInline) {
+            languageRow.add(JBLabel("  ${unresolved.size} unrecognized columns — click ✏ to map").apply {
+                foreground = UIUtil.getContextHelpForeground()
+                font = font.deriveFont(Font.ITALIC, 11f)
+            })
+        } else if (showInline) {
             languageRow.add(JBLabel("  |  Unrecognized:").apply {
                 foreground = UIUtil.getContextHelpForeground()
                 font = font.deriveFont(Font.ITALIC, 11f)
@@ -226,26 +349,23 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
                     toolTipText = "Android locale code for \"$col\" (e.g. vi, id, ms)"
                     font = font.deriveFont(12f)
                 }
-                val label = JBLabel("\"$col\" →").apply {
+                val lbl = JBLabel("\"$col\" →").apply {
                     foreground = UIUtil.getContextHelpForeground()
                     font = font.deriveFont(Font.ITALIC, 11f)
                 }
-                // When user confirms the locale code (press Enter or focus lost)
                 val confirm: () -> Unit = confirm@{
                     val code = field.text.trim().lowercase()
                     if (code.isEmpty()) return@confirm
-                    // Save to persistence and add checkbox
                     val custom = persistence.customLocaleMap.toMutableMap()
                     custom[col.lowercase()] = code
                     persistence.customLocaleMap = custom
-                    // Re-run detection to refresh the whole panel
-                    detectLanguages(csvPath)
+                    refreshLanguages()
                 }
                 field.addActionListener { confirm() }
                 field.addFocusListener(object : java.awt.event.FocusAdapter() {
                     override fun focusLost(e: java.awt.event.FocusEvent) = confirm()
                 })
-                languageRow.add(label)
+                languageRow.add(lbl)
                 languageRow.add(field)
             }
         }
@@ -366,9 +486,8 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
             preferredSize = Dimension(28, 24)
             isVisible = row.assetBox.isSelected
             addActionListener {
-                val customMap = persistence.customLocaleMap
-                val locales = languageBoxes.filter { it.value.isSelected }
-                    .mapNotNull { (col, _) -> resolveLocale(col) ?: customMap[col.lowercase()] }
+                // languageBoxes key is now the locale code directly
+                val locales = languageBoxes.filter { it.value.isSelected }.keys.toList()
                 val dialog = AssetConfigDialog(project, withKey, row.selectedFields, locales)
                 if (dialog.showAndGet()) {
                     row.selectedFields = dialog.selectedFields().toMutableList()
@@ -479,12 +598,15 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
     // ── Generate ──────────────────────────────────────────────────────────────
 
     private fun onGenerate() {
-        val customMap = persistence.customLocaleMap
+        // Build langMap using ORIGINAL CSV column names (not locale codes).
+        // e.g. {"Korean" → "ko", "Thai" → "th"} so loadCsv/loadArrayCsv can find the right columns.
+        // For mapped CSVs the column name equals the locale code, which is fine since those
+        // CSVs go through loadCsvFromNormalized (which ignores langMap anyway).
         val selectedLangs = languageBoxes
             .filter { it.value.isSelected }
-            .mapNotNull { (col, _) ->
-                val locale = resolveLocale(col) ?: customMap[col.lowercase()]
-                locale?.let { col to it }
+            .mapNotNull { (locale, _) ->
+                val colName = localeToColumnName[locale] ?: locale
+                colName to locale   // colName → locale (e.g. "Korean" → "ko")
             }
             .toMap()
 
@@ -505,7 +627,7 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
                 .map { (_, r) -> r.config.copy(translateFields = r.selectedFields) },
             generateMode = persistence.generateMode,
             csvMappings  = buildMap {
-                listOf(csvAndroidField, csvOverlapField).forEach { f ->
+                listOf(csvAndroidField, csvOverlapField, csvArraysField).forEach { f ->
                     val path = f.text.trim().takeIf { it.isNotEmpty() } ?: return@forEach
                     persistence.getCsvMapping(path)?.let { put(path, it) }
                 }
@@ -564,21 +686,42 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
         picker: com.intellij.openapi.ui.TextFieldWithBrowseButton,
         showMapBtn: Boolean = false
     ): JPanel {
+        fun hasFile() = picker.text.trim().let { Paths.get(it).toFile().isFile }
+
         val mapBtn = if (showMapBtn) JButton(com.intellij.icons.AllIcons.Actions.Edit).apply {
             isBorderPainted = false; isContentAreaFilled = false
             preferredSize = Dimension(26, 26)
-            cursor = Cursor(Cursor.HAND_CURSOR)
-            toolTipText = "Configure column mapping for this CSV"
+            // Always visible; enabled/disabled based on whether a file is selected
+            isEnabled = hasFile()
+            cursor = Cursor(if (hasFile()) Cursor.HAND_CURSOR else Cursor.DEFAULT_CURSOR)
+            toolTipText = if (hasFile()) "Configure column mapping" else "Select a CSV file first"
             addActionListener {
-                val path = Paths.get(picker.text.trim()).takeIf { it.exists() } ?: return@addActionListener
+                val path = Paths.get(picker.text.trim()).takeIf { it.toFile().isFile }
+                    ?: return@addActionListener
                 val existing = persistence.getCsvMapping(path.toString())
                 val dialog = CsvMappingDialog(project, path, existing)
                 if (dialog.showAndGet()) {
                     val mapping = dialog.buildMapping()
                     if (dialog.shouldRemember()) persistence.saveCsvMapping(path.toString(), mapping)
+                    refreshLanguages()  // merge all 3 CSV fields
                 }
             }
         } else null
+
+        // Sync enabled state when text field changes
+        if (mapBtn != null) {
+            picker.textField.document.addDocumentListener(object : javax.swing.event.DocumentListener {
+                override fun insertUpdate(e: javax.swing.event.DocumentEvent)  = sync()
+                override fun removeUpdate(e: javax.swing.event.DocumentEvent)  = sync()
+                override fun changedUpdate(e: javax.swing.event.DocumentEvent) = sync()
+                private fun sync() {
+                    val has = hasFile()
+                    mapBtn.isEnabled  = has
+                    mapBtn.cursor     = Cursor(if (has) Cursor.HAND_CURSOR else Cursor.DEFAULT_CURSOR)
+                    mapBtn.toolTipText = if (has) "Configure column mapping" else "Select a CSV file first"
+                }
+            })
+        }
 
         return JPanel(BorderLayout(4, 0)).apply {
             alignmentX = Component.LEFT_ALIGNMENT
@@ -601,7 +744,7 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
 
     private fun csvPath(f: TextFieldWithBrowseButton): Path? {
         val t = f.text.trim()
-        return if (t.isNotEmpty()) Paths.get(t).takeIf { it.exists() } else null
+        return if (t.isNotEmpty()) Paths.get(t).takeIf { it.toFile().isFile } else null
     }
 }
 

@@ -142,8 +142,9 @@ object CsvPreprocessor {
             val key     = if (keyIdx >= 0 && keyIdx < row.size) row[keyIdx].trim() else ""
             val english = if (enIdx  >= 0 && enIdx  < row.size) row[enIdx].trim()  else ""
 
-            // Skip rows with no key
-            if (key.isEmpty()) continue
+            // Skip rows where BOTH key AND english are empty — nothing to use
+            // Rows with empty key but non-empty english are kept: they contribute to byEn lookup
+            if (key.isEmpty() && english.isEmpty()) continue
 
             val normalizedRow = mutableListOf(key, english)
             langCols.forEach { (colIdx, _) ->

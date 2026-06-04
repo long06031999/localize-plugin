@@ -1,7 +1,7 @@
 <idea-plugin dynamic="true">
     <id>com.paulbaker.localize-plugin</id>
     <name>Localize Tool</name>
-    <vendor>Paul Baker</vendor>
+    <vendor>PaulBaker</vendor>
     <description>Generate localized strings.xml and JSON assets from CSV translation files.</description>
 
     <depends>com.intellij.modules.platform</depends>
