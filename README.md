@@ -47,7 +47,7 @@ Generates localized `strings.xml` and JSON asset files from CSV translation spre
 
 ```bash
 git clone <repo-url>
-cd chatsmith-localize-plugin
+cd localize-plugin
 ./gradlew buildPlugin
 # Output: build/distributions/chatsmith-localize-plugin-1.0.0.zip
 ```
