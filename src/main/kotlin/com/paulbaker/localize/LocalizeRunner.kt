@@ -11,7 +11,10 @@ import kotlin.io.path.writeText
 
 class LocalizeRunner {
 
-    fun run(config: LocalizeConfig, logger: (String, OutputLevel) -> Unit) {
+    fun run(config: LocalizeConfig, logger: (String, OutputLevel) -> Unit) =
+        generate(loadCsvs(config, logger), config, logger)
+
+    private fun loadCsvs(config: LocalizeConfig, logger: (String, OutputLevel) -> Unit): TranslationDb {
         val langMap = config.selectedLanguages  // csv_col → locale
 
         // ── Phase 1: Load CSVs ─────────────────────────────────────────────────
@@ -51,9 +54,17 @@ class LocalizeRunner {
                 logger("  ✓ arrays: loaded (${db.byArray.size} arrays)", OutputLevel.INFO)
             }
         }
-        logger("  DB: ${db.byKey.size} unique keys, ${db.byEn.size} English phrases", OutputLevel.INFO)
+        return db
+    }
+
+    /** Phases 2–4, from an already-populated [db]. */
+    private fun generate(db: TranslationDb, config: LocalizeConfig, logger: (String, OutputLevel) -> Unit) {
+        val langMap = config.selectedLanguages
+
+        logger("  DB: ${db.byKey.size} unique keys, ${db.byEn.size} English phrases" +
+               (if (db.byPlural.isNotEmpty()) ", ${db.byPlural.size} plurals" else ""), OutputLevel.INFO)
         if (db.conflicts.isNotEmpty())
-            logger("  ⚠ ${db.conflicts.size} CSV conflicts (android_only takes priority)", OutputLevel.WARN)
+            logger("  ⚠ ${db.conflicts.size} source conflicts (android_only takes priority)", OutputLevel.WARN)
 
         val valuesDir = config.resolvedValuesDir()
         val xmlGen = XmlGenerator(db)
@@ -61,8 +72,13 @@ class LocalizeRunner {
         // Pass selected assets so XmlGenerator can dynamically detect JSON path strings
         xmlGen.setSelectedAssets(config.selectedAssets)
         xmlGen.setGenerateMode(config.generateMode)
+        xmlGen.setPreserveKeyOrder(config.preserveKeyOrder)
+        xmlGen.setOverrideNonTranslatable(config.overrideNonTranslatable)
         val jsonLoc = JsonLocalizer(db)
         logger("  Mode: ${config.generateMode.name.lowercase().replace('_', ' ')}", OutputLevel.INFO)
+        logger("  Key order: ${if (config.preserveKeyOrder) "preserve existing positions" else "follow template"}", OutputLevel.INFO)
+        if (config.overrideNonTranslatable)
+            logger("  translatable=\"false\": overridden when the source has a value", OutputLevel.WARN)
 
         val allReports = mutableMapOf<String, LocaleReport>()
 
@@ -88,6 +104,8 @@ class LocalizeRunner {
                     report.changedKeys   += result.changedKeys
                     report.skippedArrays += result.skippedArrays
                     report.notFoundKeys  += result.notFoundKeys
+                    report.ntOverridden  += result.ntOverridden
+                    report.ntSkipped     += result.ntSkipped
                 }
             }
 
@@ -126,6 +144,8 @@ class LocaleReport(val locale: String) {
     val changedKeys  = mutableListOf<String>()
     val skippedArrays = mutableListOf<XmlGenerator.SkippedArray>()
     val notFoundKeys  = mutableListOf<XmlGenerator.NotFound>()
+    val ntOverridden  = mutableListOf<XmlGenerator.NonTranslatable>()
+    val ntSkipped     = mutableListOf<XmlGenerator.NonTranslatable>()
     var jsonWritten  = 0
     val jsonUnmatched = mutableListOf<JsonLocalizer.UnmatchedField>()
 
@@ -145,6 +165,8 @@ class LocaleReport(val locale: String) {
         sb.appendLine("| JSON fields unmatched | ${jsonUnmatched.size} |")
         sb.appendLine("| CSV conflicts | ${conflicts.size} |")
         sb.appendLine("| Skipped string-arrays | ${skippedArrays.size} |")
+        sb.appendLine("| Non-translatable overridden | ${ntOverridden.size} |")
+        sb.appendLine("| Non-translatable skipped | ${ntSkipped.size} |")
         sb.appendLine()
 
         if (changedKeys.isNotEmpty()) {
@@ -181,6 +203,27 @@ class LocaleReport(val locale: String) {
             grouped.entries.sortedBy { it.key.first }.forEach { (k, count) ->
                 sb.appendLine("| `${k.first}` | ${k.second} | $count |")
             }
+            sb.appendLine()
+        }
+
+        if (ntOverridden.isNotEmpty()) {
+            sb.appendLine("## Non-Translatable — Overridden\n")
+            sb.appendLine("These carry `translatable=\"false\"` in the template but the source supplied a")
+            sb.appendLine("translation, so they WERE written. Verify each one is meant to be localized.\n")
+            sb.appendLine("| Key | Kind | Source (EN) | Written |")
+            sb.appendLine("|---|---|---|---|")
+            ntOverridden.forEach { nt ->
+                sb.appendLine("| `${nt.key}` | ${nt.kind} | ${nt.enText} | ${nt.translation ?: ""} |")
+            }
+            sb.appendLine()
+        }
+
+        if (ntSkipped.isNotEmpty()) {
+            sb.appendLine("## Non-Translatable — Skipped\n")
+            sb.appendLine("`translatable=\"false\"` was honoured: these are absent from the locale file.\n")
+            sb.appendLine("| Key | Kind | Value (EN) |")
+            sb.appendLine("|---|---|---|")
+            ntSkipped.forEach { nt -> sb.appendLine("| `${nt.key}` | ${nt.kind} | ${nt.enText} |") }
             sb.appendLine()
         }
 

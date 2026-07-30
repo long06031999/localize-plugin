@@ -30,6 +30,10 @@ data class LocalizeConfig(
     val selectedXmlFiles: List<String>,
     val selectedAssets: List<AssetConfig>,
     val generateMode: GenerateMode = GenerateMode.MERGE,
+    /** Keep the position each key already has in the locale file instead of re-ordering to match the template. */
+    val preserveKeyOrder: Boolean = true,
+    /** Write `translatable="false"` elements when — and only when — the source supplies a translation. */
+    val overrideNonTranslatable: Boolean = false,
     val csvMappings: Map<String, CsvMapping> = emptyMap(), // filePath → mapping
     // null = use defaults relative to projectDir
     val valuesDir: Path? = null,

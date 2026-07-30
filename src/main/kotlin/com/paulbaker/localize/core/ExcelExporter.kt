@@ -4,7 +4,6 @@ import com.paulbaker.localize.config.AssetConfig
 import org.apache.poi.ss.usermodel.*
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import java.nio.file.Path
-import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.io.path.exists
 import kotlin.io.path.readText
 
@@ -173,7 +172,7 @@ class ExcelExporter(
                 // For each selected field
                 collectFieldsRecursively(baseObj, fields, "", { fieldPath, englishVal ->
                     val row = sheet.createRow(rowIdx++)
-                    writeCell(row, 0, if (fieldPath == fields.first() && rowIdx > 2) asset.name else asset.name)
+                    writeCell(row, 0, asset.name)
                     writeCell(row, 1, fieldPath)
                     writeCell(row, 2, englishVal)
                     locales.forEachIndexed { i, loc ->
@@ -220,19 +219,23 @@ class ExcelExporter(
             val plurals  = mutableMapOf<String, Map<String, String>>()
             val cdataRe  = Regex("""^\s*<!\[CDATA\[(.*?)]\]>\s*$""", RegexOption.DOT_MATCHES_ALL)
 
-            // Parse <string> elements
-            Regex("""<string\s+name="([^"]+)"[^>]*>(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
+            // Parse <string> elements. translatable="false" is skipped: those values are
+            // infrastructure, not copy — putting them in the workbook only invites a
+            // translator to spend effort on strings that must never change.
+            Regex("""<string\s+name="([^"]+)"([^>]*)>(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
                 .findAll(text).forEach { m ->
-                    val content = m.groupValues[2]
+                    if (NON_TRANSLATABLE.containsMatchIn(m.groupValues[2])) return@forEach
+                    val content = m.groupValues[3]
                     strings[m.groupValues[1]] = cdataRe.find(content)?.groupValues?.get(1) ?: content
                 }
 
             // Parse <string-array> elements
-            Regex("""<string-array\s+name="([^"]+)"[^>]*>(.*?)</string-array>""", RegexOption.DOT_MATCHES_ALL)
+            Regex("""<string-array\s+name="([^"]+)"([^>]*)>(.*?)</string-array>""", RegexOption.DOT_MATCHES_ALL)
                 .findAll(text).forEach { m ->
+                    if (NON_TRANSLATABLE.containsMatchIn(m.groupValues[2])) return@forEach
                     val items = mutableListOf<String>()
                     Regex("""<item[^>]*>(.*?)</item>""", RegexOption.DOT_MATCHES_ALL)
-                        .findAll(m.groupValues[2]).forEach { im ->
+                        .findAll(m.groupValues[3]).forEach { im ->
                             val c = im.groupValues[1]
                             items += cdataRe.find(c)?.groupValues?.get(1) ?: c
                         }
@@ -240,11 +243,12 @@ class ExcelExporter(
                 }
 
             // Parse <plurals> elements
-            Regex("""<plurals\s+name="([^"]+)"[^>]*>(.*?)</plurals>""", RegexOption.DOT_MATCHES_ALL)
+            Regex("""<plurals\s+name="([^"]+)"([^>]*)>(.*?)</plurals>""", RegexOption.DOT_MATCHES_ALL)
                 .findAll(text).forEach { m ->
+                    if (NON_TRANSLATABLE.containsMatchIn(m.groupValues[2])) return@forEach
                     val qMap = mutableMapOf<String, String>()
                     Regex("""<item\s+quantity="([^"]+)"[^>]*>(.*?)</item>""", RegexOption.DOT_MATCHES_ALL)
-                        .findAll(m.groupValues[2]).forEach { im ->
+                        .findAll(m.groupValues[3]).forEach { im ->
                             val c = im.groupValues[2]
                             qMap[im.groupValues[1]] = cdataRe.find(c)?.groupValues?.get(1) ?: c
                         }
@@ -287,6 +291,11 @@ class ExcelExporter(
         }
     }
 
+    /**
+     * Emits the DOTTED path of every selected field, not the bare key name — [getNestedFieldValue]
+     * resolves the locale value by walking that path, so a nested field emitted as `"title"`
+     * instead of `"header.title"` would always come back empty.
+     */
     private fun collectFieldsRecursively(
         obj: com.google.gson.JsonObject,
         fields: Set<String>,
@@ -298,7 +307,7 @@ class ExcelExporter(
             val path  = if (prefix.isEmpty()) key else "$prefix.$key"
             when {
                 key in fields && child.isJsonPrimitive && child.asJsonPrimitive.isString ->
-                    emit(key, child.asString)
+                    emit(path, child.asString)
                 child.isJsonObject ->
                     collectFieldsRecursively(child.asJsonObject, fields, path, emit)
             }
@@ -335,5 +344,10 @@ class ExcelExporter(
         for (i in 0 until count) {
             try { sheet.autoSizeColumn(i) } catch (_: Exception) {}
         }
+    }
+
+    private companion object {
+        /** Matches `translatable="false"` on any resource element, however it is spaced or cased. */
+        val NON_TRANSLATABLE = Regex("""translatable\s*=\s*"\s*false\s*"""", RegexOption.IGNORE_CASE)
     }
 }

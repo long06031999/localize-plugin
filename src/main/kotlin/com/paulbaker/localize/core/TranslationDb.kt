@@ -16,6 +16,9 @@ class TranslationDb {
     val byEn = mutableMapOf<String, MutableMap<String, String>>()
     // normalized array name → { normalized english → {locale: translation} }
     val byArray = mutableMapOf<String, MutableMap<String, MutableMap<String, String>>>()
+    // normalized plurals name → { quantity → {locale: translation} }
+    // Fed by rows keyed "plural_name:quantity" (the format ExcelExporter writes).
+    val byPlural = mutableMapOf<String, MutableMap<String, MutableMap<String, String>>>()
 
     val conflicts = mutableListOf<Conflict>()
 
@@ -48,24 +51,7 @@ class TranslationDb {
 
             if (key.isEmpty() && english.isEmpty() && trans.isEmpty()) continue
 
-            if (key.isNotEmpty()) {
-                val nk = normKey(key)
-                val entry = byKey.getOrPut(nk) { Entry(english) }
-                if (entry.english.isEmpty() && english.isNotEmpty())
-                    byKey[nk] = entry.copy(english = english)
-                trans.forEach { (locale, v) ->
-                    val existing = entry.tr[locale]
-                    if (existing != null && existing != v)
-                        conflicts += Conflict(key, locale, existing, v)
-                    else
-                        entry.tr[locale] = v
-                }
-            }
-            if (english.isNotEmpty()) {
-                val ne = normEn(english)
-                val map = byEn.getOrPut(ne) { mutableMapOf() }
-                trans.forEach { (locale, v) -> map.putIfAbsent(locale, v) }
-            }
+            ingestRow(key, english, trans)
         }
     }
 
@@ -123,23 +109,7 @@ class TranslationDb {
                 if (v.isNotEmpty()) locale to v else null
             }.toMap()
 
-            if (key.isNotEmpty()) {
-                val nk = normKey(key)
-                val entry = byKey.getOrPut(nk) { Entry(english) }
-                if (entry.english.isEmpty() && english.isNotEmpty()) byKey[nk] = entry.copy(english = english)
-                trans.forEach { (locale, v) ->
-                    val existing = entry.tr[locale]
-                    if (existing != null && existing != v)
-                        conflicts += Conflict(key, locale, existing, v)
-                    else
-                        entry.tr[locale] = v
-                }
-            }
-            if (english.isNotEmpty()) {
-                val ne = normEn(english)
-                val map = byEn.getOrPut(ne) { mutableMapOf() }
-                trans.forEach { (locale, v) -> map.putIfAbsent(locale, v) }
-            }
+            ingestRow(key, english, trans)
         }
     }
 
@@ -171,6 +141,42 @@ class TranslationDb {
         }
     }
 
+    /**
+     * Register one source row into the lookup maps.
+     *
+     * A key of the form `name:quantity` is a plurals row, not a `<string>` — Android resource
+     * names cannot contain `:`, so the pattern is unambiguous. It goes to [byPlural] and keeps
+     * each quantity distinct, which matters for locales where `one` and `other` share the same
+     * English source but differ in translation.
+     */
+    private fun ingestRow(key: String, english: String, trans: Map<String, String>) {
+        if (key.isNotEmpty()) {
+            val plural = PLURAL_KEY.matchEntire(key.trim())
+            if (plural != null) {
+                val quantities = byPlural.getOrPut(normKey(plural.groupValues[1])) { mutableMapOf() }
+                val locMap     = quantities.getOrPut(plural.groupValues[2].lowercase()) { mutableMapOf() }
+                trans.forEach { (locale, v) -> locMap.putIfAbsent(locale, v) }
+            } else {
+                val nk = normKey(key)
+                val entry = byKey.getOrPut(nk) { Entry(english) }
+                if (entry.english.isEmpty() && english.isNotEmpty())
+                    byKey[nk] = entry.copy(english = english)
+                trans.forEach { (locale, v) ->
+                    val existing = entry.tr[locale]
+                    if (existing != null && existing != v)
+                        conflicts += Conflict(key, locale, existing, v)
+                    else
+                        entry.tr[locale] = v
+                }
+            }
+        }
+        if (english.isNotEmpty()) {
+            val ne = normEn(english)
+            val map = byEn.getOrPut(ne) { mutableMapOf() }
+            trans.forEach { (locale, v) -> map.putIfAbsent(locale, v) }
+        }
+    }
+
     // ── Lookup ─────────────────────────────────────────────────────────────────
 
     fun lookup(name: String, enText: String, locale: String): String? {
@@ -188,10 +194,28 @@ class TranslationDb {
         return arrMap[normEn(enText)]?.get(locale)
     }
 
+    fun lookupPlural(pluralName: String, quantity: String, locale: String): String? =
+        byPlural[normKey(pluralName)]?.get(quantity.trim().lowercase())?.get(locale)
+
     // ── Utilities ──────────────────────────────────────────────────────────────
 
     fun normKey(k: String): String = k.trim().lowercase().replace('-', '_')
-    fun normEn(s: String): String  = s.trim().lowercase().replace(Regex("\\s+"), " ")
+
+    /**
+     * Canonical form of an English source string, used as the lookup key for [byEn] / [byArray].
+     *
+     * Invisible characters are stripped first: spreadsheets routinely carry a stray
+     * VARIATION SELECTOR-16 or zero-width character that the XML template doesn't have
+     * (e.g. `U+FE0F + "Work Tasks"` in the CSV vs plain `"Work Tasks"` in `strings.xml`),
+     * which would otherwise make the item unmatchable and silently skip the whole
+     * string-array. Emoji themselves are kept, so `"Business"` with a leading briefcase
+     * emoji still never matches bare `"Business"`.
+     */
+    fun normEn(s: String): String = s
+        .replace(INVISIBLE_CHARS, "")
+        .replace('\u00A0', ' ')
+        .trim().lowercase()
+        .replace(Regex("\\s+"), " ")
 
     fun readHeaders(path: Path): List<String> {
         if (!path.exists()) return emptyList()
@@ -201,6 +225,12 @@ class TranslationDb {
     }
 
     companion object {
+        /** `plural_name:quantity` — the key format ExcelExporter writes for `<plurals>` items. */
+        private val PLURAL_KEY = Regex("""^([A-Za-z_][A-Za-z0-9_]*):(zero|one|two|few|many|other)$""", RegexOption.IGNORE_CASE)
+
+        /** Variation selectors + zero-width characters + BOM — invisible, never meaningful for matching. */
+        private val INVISIBLE_CHARS = Regex("[\uFE00-\uFE0F\u200B-\u200D\u2060\uFEFF]")
+
         /** Strip UTF-8 BOM (﻿), trim whitespace, lowercase. */
         fun stripBom(s: String): String = s.trimStart('\uFEFF').trim().lowercase()
 

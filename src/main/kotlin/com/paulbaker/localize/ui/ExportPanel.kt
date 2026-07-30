@@ -20,7 +20,6 @@ import com.paulbaker.localize.core.TranslationDb
 import java.awt.*
 import java.nio.file.Paths
 import javax.swing.*
-import kotlin.io.path.exists
 
 class ExportPanel(val project: Project) : JPanel(BorderLayout()) {
 
@@ -215,6 +214,7 @@ class ExportPanel(val project: Project) : JPanel(BorderLayout()) {
     private fun scanAssets() {
         val dir = Paths.get(assetsDirField.text.trim()).takeIf { it.toFile().isDirectory } ?: return
         val localizer = JsonLocalizer(TranslationDb())
+        val savedAssets = persistence.exportAssets
         assetPanel.removeAll(); assetRows.clear()
         ignoredList.clear()
 
@@ -226,14 +226,20 @@ class ExportPanel(val project: Project) : JPanel(BorderLayout()) {
             val dataKey = localizer.detectDataKey(stub)
             val withKey = stub.copy(dataKey = dataKey)
             val reason  = localizer.ignoreReason(withKey)
-            if (reason != null) { ignoredList += Triple(d.name, withKey, reason); return@forEach }
+            // Assets the user promoted out of the Ignored group stay in the main list
+            if (reason != null && d.name !in savedAssets) {
+                ignoredList += Triple(d.name, withKey, reason); return@forEach
+            }
 
             val auto    = localizer.detectTranslateFields(withKey)
             val allFlds = localizer.detectAllStringFields(withKey)
             val saved   = persistence.exportAssetFields[d.name]?.filter { it in allFlds }
             val initial = (saved ?: auto).toMutableList()
             val row     = AssetRow(
-                JBCheckBox(d.name).apply { isSelected = true; font = font.deriveFont(13f) },
+                JBCheckBox(d.name).apply {
+                    isSelected = savedAssets.isEmpty() || d.name in savedAssets
+                    font = font.deriveFont(13f)
+                },
                 initial, withKey.copy(translateFields = initial)
             )
             assetRows[d.name] = row
@@ -305,6 +311,8 @@ class ExportPanel(val project: Project) : JPanel(BorderLayout()) {
                     val auto = localizer.detectTranslateFields(cfg)
                     val row  = AssetRow(JBCheckBox(name).apply { isSelected = true; font = font.deriveFont(13f) }, auto.toMutableList(), cfg.copy(translateFields = auto))
                     assetRows[name] = row
+                    // Remember the promotion so the asset doesn't fall back into Ignored on reopen
+                    persistence.exportAssets = assetRows.filter { it.value.assetBox.isSelected }.keys.toList()
                     val sl = JBLabel("  ${auto.joinToString(", ")}").apply { foreground = UIUtil.getContextHelpForeground(); font = font.deriveFont(11f) }
                     val idx = assetPanel.componentCount - 1
                     assetPanel.add(JPanel(BorderLayout(6, 0)).apply {
@@ -338,6 +346,7 @@ class ExportPanel(val project: Project) : JPanel(BorderLayout()) {
         persistence.exportOutputPath = outputField.text
         persistence.exportXmlFiles   = xmlFileBoxes.filter { it.value.isSelected }.keys.toList()
         persistence.exportLocales    = localeBoxes.filter { it.value.isSelected }.keys.toList()
+        persistence.exportAssets     = assetRows.filter { it.value.assetBox.isSelected }.keys.toList()
         persistence.exportAssetFields = assetRows.mapValues { it.value.selectedFields }
 
         exportBtn.isEnabled = false
