@@ -24,12 +24,21 @@ class DashboardPanel(
     }
 
     private fun buildUI() {
+        // Every child of this BoxLayout must share the SAME alignmentX. BoxLayout aligns
+        // children relative to one another, so mixing CENTER (title) with LEFT (cards) lines
+        // the title's centre up with the cards' left edge and shoves the cards half a title
+        // to the right instead of centring anything.
+        // The column is capped here, not on the children: children stretch to whatever width
+        // this panel gets, so they all land at x=0 and stay flush with each other. Capping each
+        // child instead leaves BoxLayout to place them by alignmentX, which is off by a pixel
+        // or two from real centring.
         val content = JPanel().apply {
             layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
+            alignmentX = Component.CENTER_ALIGNMENT
+            maximumSize = Dimension(CARD_MAX_WIDTH, Int.MAX_VALUE)
         }
 
-        // Title — centered horizontally
         val title = JBLabel("Choose a tool", SwingConstants.CENTER).apply {
             font = font.deriveFont(Font.BOLD, 15f)
             alignmentX = Component.CENTER_ALIGNMENT
@@ -53,14 +62,25 @@ class DashboardPanel(
             onClick     = onExport
         ))
 
-        // Wrap in a panel that centers horizontally
-        val wrapper = JPanel(GridBagLayout()).apply {
+        // Centre with glue on both sides of each axis rather than with alignmentX. BoxLayout is
+        // exact when it distributes leftover space ALONG its axis, but its across-axis alignment
+        // arithmetic rounds, which is what left the column a few pixels off centre.
+        //
+        // Glue also collapses to zero when space runs out, so a cramped tool window clips at the
+        // edges instead of pushing the title out of view.
+        val row = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
             isOpaque = false
-            add(content, GridBagConstraints().also { c ->
-                c.fill   = GridBagConstraints.HORIZONTAL
-                c.anchor = GridBagConstraints.NORTH
-                c.weightx = 1.0; c.weighty = 1.0
-            })
+            add(Box.createHorizontalGlue())
+            add(content)
+            add(Box.createHorizontalGlue())
+        }
+        val wrapper = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(Box.createVerticalGlue())
+            add(row)
+            add(Box.createVerticalGlue())
         }
         add(wrapper, BorderLayout.CENTER)
     }
@@ -90,8 +110,10 @@ class DashboardPanel(
                 JBUI.Borders.empty(14, 16)
             )
             cursor = Cursor(Cursor.HAND_CURSOR)
+            // Width comes from the parent column (capped at CARD_MAX_WIDTH); only the height
+            // is pinned here.
             maximumSize = Dimension(Int.MAX_VALUE, 90)
-            alignmentX = Component.LEFT_ALIGNMENT
+            alignmentX = Component.CENTER_ALIGNMENT
         }
 
         // Icon
@@ -128,5 +150,10 @@ class DashboardPanel(
         })
 
         return card
+    }
+
+    private companion object {
+        /** Widest a card may get; beyond this the block just gains margins on both sides. */
+        const val CARD_MAX_WIDTH = 520
     }
 }

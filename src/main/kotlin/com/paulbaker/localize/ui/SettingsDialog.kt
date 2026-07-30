@@ -30,6 +30,16 @@ class SettingsDialog(
     private val replaceRadio = JRadioButton("Full Replace").apply { font = font.deriveFont(13f) }
     private val modeGroup    = ButtonGroup().also { it.add(mergeRadio); it.add(replaceRadio) }
 
+    // Key ordering
+    private val preserveOrderBox = JCheckBox("Keep the position each key already has").apply {
+        font = font.deriveFont(13f)
+    }
+
+    // translatable="false" handling
+    private val overrideNtBox = JCheckBox("Translate anyway when the source provides a value").apply {
+        font = font.deriveFont(13f)
+    }
+
     // Directory pickers
     private val valuesDirField  = createDirPicker()
     private val assetsDirField  = createDirPicker()
@@ -58,6 +68,41 @@ class SettingsDialog(
         root.add(radioRow(mergeRadio,   mergeDesc))
         root.add(vgap(8))
         root.add(radioRow(replaceRadio, replaceDesc))
+        root.add(vgap(14))
+
+        // ── Key order ──────────────────────────────────────────────────────────
+        root.add(section("Key Order"))
+        root.add(vgap(6))
+        root.add(JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            alignmentX = Component.LEFT_ALIGNMENT
+            maximumSize = Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
+            add(preserveOrderBox.apply { alignmentX = Component.LEFT_ALIGNMENT })
+            add(desc(
+                "On: a key that already exists in values-{locale}/ stays where it is, and new keys " +
+                "are inserted next to their template neighbour — so the diff shows only what changed.<br>" +
+                "Off: the locale file is rewritten in values/ template order, which shows moved keys " +
+                "as a delete plus an unrelated addition."
+            ).apply { alignmentX = Component.LEFT_ALIGNMENT })
+        })
+        root.add(vgap(14))
+
+        // ── translatable="false" ───────────────────────────────────────────────
+        root.add(section("Non-Translatable Strings  (translatable=\"false\")"))
+        root.add(vgap(6))
+        root.add(JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            alignmentX = Component.LEFT_ALIGNMENT
+            maximumSize = Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
+            add(overrideNtBox.apply { alignmentX = Component.LEFT_ALIGNMENT })
+            add(desc(
+                "Off: <code>translatable=\"false\"</code> is always honoured — the element never " +
+                "reaches the locale file.<br>" +
+                "On: it is written whenever the spreadsheet supplies a translation for it. " +
+                "Source-driven only — nothing is carried over from a previous run.<br>" +
+                "Either way the report lists what was overridden and what was skipped."
+            ).apply { alignmentX = Component.LEFT_ALIGNMENT })
+        })
         root.add(vgap(14))
 
         // ── Directories ────────────────────────────────────────────────────────
@@ -94,6 +139,8 @@ class SettingsDialog(
     private fun load() {
         if (persistence.generateMode == GenerateMode.FULL_REPLACE) replaceRadio.isSelected = true
         else mergeRadio.isSelected = true
+        preserveOrderBox.isSelected = persistence.preserveKeyOrder
+        overrideNtBox.isSelected    = persistence.overrideNonTranslatable
         // Show saved custom path, or fall back to default so user always sees what will be used
         valuesDirField.text = persistence.valuesDir.ifEmpty { defaultValuesDir }
         assetsDirField.text = persistence.assetsDir.ifEmpty { defaultAssetsDir }
@@ -101,7 +148,9 @@ class SettingsDialog(
     }
 
     override fun doOKAction() {
-        persistence.generateMode = if (replaceRadio.isSelected) GenerateMode.FULL_REPLACE else GenerateMode.MERGE
+        persistence.generateMode    = if (replaceRadio.isSelected) GenerateMode.FULL_REPLACE else GenerateMode.MERGE
+        persistence.preserveKeyOrder = preserveOrderBox.isSelected
+        persistence.overrideNonTranslatable = overrideNtBox.isSelected
         // Save as empty if user left it at the default (so future default changes are picked up)
         persistence.valuesDir = valuesDirField.text.trim().let { if (it == defaultValuesDir) "" else it }
         persistence.assetsDir = assetsDirField.text.trim().let { if (it == defaultAssetsDir) "" else it }
@@ -111,6 +160,8 @@ class SettingsDialog(
 
     private fun resetToDefaults() {
         mergeRadio.isSelected = true
+        preserveOrderBox.isSelected = true
+        overrideNtBox.isSelected    = false
         valuesDirField.text   = defaultValuesDir
         assetsDirField.text   = defaultAssetsDir
         reportDirField.text   = defaultReportDir

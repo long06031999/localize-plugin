@@ -21,3 +21,6 @@ local.properties
 # Compiled artifacts (plugin ZIP is generated on demand)
 *.jar
 *.zip
+
+# IDE builder output (duplicates src/)
+bin/

@@ -22,14 +22,15 @@ class ConfigPersistence(project: Project) {
 
     // ── Cached object — read once, write on save ──────────────────────────────
 
-    private val data: JsonObject by lazy {
-        if (configPath.exists()) {
-            runCatching { JsonParser.parseString(configPath.readText()).asJsonObject }
-                .getOrElse { JsonObject() }
-        } else {
-            JsonObject()
-        }
-    }
+    /**
+     * Shared per config file, NOT per instance.
+     *
+     * Every panel builds its own [ConfigPersistence]; with a per-instance snapshot each one
+     * would `flush()` its own stale copy of the whole document, silently reverting whatever
+     * another panel had saved in the meantime (e.g. changing Generate Mode in Localize, then
+     * exporting, used to reset the mode back).
+     */
+    private val data: JsonObject get() = sharedData(configPath)
 
     // ── String properties ─────────────────────────────────────────────────────
 
@@ -109,9 +110,12 @@ class ConfigPersistence(project: Project) {
     // ── Internal ──────────────────────────────────────────────────────────────
 
     private fun flush() {
-        runCatching {
-            configPath.parent.toFile().mkdirs()
-            configPath.writeText(gson.toJson(data), Charsets.UTF_8)
+        val snapshot = data
+        synchronized(snapshot) {
+            runCatching {
+                configPath.parent.toFile().mkdirs()
+                configPath.writeText(gson.toJson(snapshot), Charsets.UTF_8)
+            }
         }
     }
 
@@ -135,6 +139,23 @@ class ConfigPersistence(project: Project) {
             else           -> GenerateMode.MERGE   // default: safe merge
         }
         set(v) { data.addProperty(KEY_GENERATE_MODE, v.name); flush() }
+
+    /**
+     * Keep every key at the position it already has in the `values-{locale}` XML files.
+     * Default on: re-ordering a locale file to match the template turns a one-line
+     * translation change into a delete-here / add-there diff that nobody can review.
+     */
+    var preserveKeyOrder: Boolean
+        get() = data.get(KEY_PRESERVE_ORDER)?.takeIf { it.isJsonPrimitive }?.asBoolean ?: true
+        set(v) { data.addProperty(KEY_PRESERVE_ORDER, v); flush() }
+
+    /**
+     * Off (default): `translatable="false"` is always honoured.
+     * On: such a string is translated anyway when the source spreadsheet supplies a value.
+     */
+    var overrideNonTranslatable: Boolean
+        get() = data.get(KEY_OVERRIDE_NON_TRANSLATABLE)?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false
+        set(v) { data.addProperty(KEY_OVERRIDE_NON_TRANSLATABLE, v); flush() }
 
     // ── Directory overrides ───────────────────────────────────────────────────
 
@@ -197,6 +218,11 @@ class ConfigPersistence(project: Project) {
         get() = data.getStringList(KEY_EXPORT_LOCALES)
         set(v) { data.putStringList(KEY_EXPORT_LOCALES, v); flush() }
 
+    /** Assets ticked in the Export tool — includes ones promoted out of the Ignored group. */
+    var exportAssets: List<String>
+        get() = data.getStringList(KEY_EXPORT_ASSETS)
+        set(v) { data.putStringList(KEY_EXPORT_ASSETS, v); flush() }
+
     var exportXmlFiles: List<String>
         get() = data.getStringList(KEY_EXPORT_XML_FILES)
         set(v) { data.putStringList(KEY_EXPORT_XML_FILES, v); flush() }
@@ -241,6 +267,17 @@ class ConfigPersistence(project: Project) {
         }
 
     companion object {
+        /** configPath → parsed document, shared by every instance pointing at the same file. */
+        private val documents = java.util.concurrent.ConcurrentHashMap<String, JsonObject>()
+
+        private fun sharedData(configPath: Path): JsonObject =
+            documents.computeIfAbsent(configPath.toString()) {
+                if (configPath.exists())
+                    runCatching { JsonParser.parseString(configPath.readText()).asJsonObject }
+                        .getOrElse { JsonObject() }
+                else JsonObject()
+            }
+
         private const val KEY_CSV_ANDROID    = "csvAndroidOnly"
         private const val KEY_CSV_OVERLAP    = "csvOverlap"
         private const val KEY_CSV_ARRAYS     = "csvArrays"
@@ -252,8 +289,11 @@ class ConfigPersistence(project: Project) {
         private const val KEY_EXPORT_OUTPUT_PATH   = "exportOutputPath"
         private const val KEY_EXPORT_XML_FILES     = "exportXmlFiles"
         private const val KEY_EXPORT_LOCALES       = "exportLocales"
+        private const val KEY_EXPORT_ASSETS        = "exportAssets"
         private const val KEY_CUSTOM_LOCALES  = "customLocaleMap"
         private const val KEY_GENERATE_MODE   = "generateMode"
+        private const val KEY_PRESERVE_ORDER  = "preserveKeyOrder"
+        private const val KEY_OVERRIDE_NON_TRANSLATABLE = "overrideNonTranslatable"
         private const val KEY_VALUES_DIR      = "valuesDir"
         private const val KEY_ASSETS_DIR      = "assetsDir"
         private const val KEY_REPORT_DIR      = "reportDir"
