@@ -22,6 +22,7 @@ object DevCheck {
         testInvisibleCharMatch(root.resolve("t6"))
         testNonTranslatableSkipped(root.resolve("t7"))
         testJsonItemIdentityMerge(root.resolve("t8"))
+        testJsonPreviewMatchesGenerate(root.resolve("t9"))
         testDashboardCentering()
         println(if (failures == 0) "\nALL CHECKS PASSED" else "\n$failures CHECK(S) FAILED")
     }
@@ -333,6 +334,87 @@ object DevCheck {
               r3.preserved.map { it.value })
         check("keepExisting: English fallbacks still reported as unmatched",
               r3.unmatched.any { it.value == "Sign in to sync" }, r3.unmatched.map { it.value })
+    }
+
+    /**
+     * The asset preview must agree with what Generate writes, and must reach the spreadsheet —
+     * it used to read only the existing locale file, so any locale not yet generated previewed
+     * as English however complete the CSV was.
+     */
+    private fun testJsonPreviewMatchesGenerate(dir: Path) {
+        val assets = dir.resolve("assets/new_features")
+        Files.createDirectories(assets)
+        assets.resolve("features.json").toFile().writeText("""
+            [
+              {"id": 17, "title": "Image Generator", "description": "Generate images.", "image": "a.png"},
+              {"id": 15, "title": "Email Assistant", "description": "Write emails.",    "image": "b.png"},
+              {"id": 12, "title": "Sign in to sync", "description": "Carry Premium.",   "image": "c.png"}
+            ]
+        """.trimIndent(), Charsets.UTF_8)
+
+        // ja exists on disk; de does NOT — de must still preview from the CSV
+        assets.resolve("features_ja.json").toFile().writeText("""
+            [
+              {"id": 15, "title": "旧・メールアシスタント", "description": "旧・メール作成", "image": "b.png"}
+            ]
+        """.trimIndent(), Charsets.UTF_8)
+
+        val db = TranslationDb()
+        val csv = dir.resolve("main.csv")
+        csv.toFile().writeText(
+            "android_key,english,german,japanese\n" +
+            ",Image Generator,Bildgenerator,画像ジェネレーター\n" +
+            ",Generate images.,Bilder erstellen.,画像を生成\n" +
+            ",Email Assistant,E-Mail-Assistent,\n",
+            Charsets.UTF_8
+        )
+        db.loadCsv(csv, "android_key", mapOf("german" to "de", "japanese" to "ja"))
+
+        val fields = setOf("title", "description")
+        val translate: (String, String) -> String? = { en, loc -> db.lookup("", en, loc) }
+        val base = com.google.gson.JsonParser
+            .parseString(assets.resolve("features.json").toFile().readText(Charsets.UTF_8))
+
+        fun previewOf(locale: String): Pair<com.google.gson.JsonElement, com.paulbaker.localize.core.JsonPreview.Stats> {
+            val refFile = assets.resolve("features_$locale.json").toFile()
+            val ref = if (refFile.exists())
+                com.google.gson.JsonParser.parseString(refFile.readText(Charsets.UTF_8)) else null
+            val stats = com.paulbaker.localize.core.JsonPreview.Stats()
+            return com.paulbaker.localize.core.JsonPreview
+                .build(base, ref, fields, locale, translate, stats) to stats
+        }
+
+        // ── de: no locale file at all, CSV has two of three items ──
+        val (previewDe, statsDe) = previewOf("de")
+        val deText = previewDe.toString()
+        check("preview: CSV reaches a locale with no file", "Bildgenerator" in deText, deText)
+        check("preview: counts CSV hits", statsDe.fromCsv == 3, "csv=${statsDe.fromCsv}")
+        check("preview: counts English leftovers", statsDe.english == 3, "en=${statsDe.english}")
+        check("preview: nothing from file for de", statsDe.fromFile == 0, "file=${statsDe.fromFile}")
+
+        // ── ja: CSV partially covers, locale file covers one more ──
+        val (previewJa, statsJa) = previewOf("ja")
+        val jaText = previewJa.toString()
+        check("preview: CSV wins over the locale file", "画像ジェネレーター" in jaText, jaText)
+        check("preview: falls back to the locale file", "旧・メール作成" in jaText, jaText)
+        // id 15 has an EMPTY japanese cell for title and no CSV row at all for its description,
+        // so both of its fields come from features_ja.json
+        check("preview: falls back for the empty CSV cell too", "旧・メールアシスタント" in jaText, jaText)
+        check("preview: counts file fallbacks", statsJa.fromFile == 2, "file=${statsJa.fromFile}")
+        check("preview: id 12 has no source in either", statsJa.english == 2, "en=${statsJa.english}")
+
+        // ── Parity: the preview must equal what Generate actually writes ──
+        listOf("de", "ja").forEach { locale ->
+            val (preview, _) = previewOf(locale)
+            val asset = com.paulbaker.localize.config.AssetConfig(
+                "new_features", assets, "features.json", fields.toList())
+            com.paulbaker.localize.core.JsonLocalizer(db)
+                .localize(asset, locale, locale, GenerateMode.MERGE)
+            val generated = com.google.gson.JsonParser.parseString(
+                assets.resolve("features_$locale.json").toFile().readText(Charsets.UTF_8))
+            check("preview matches Generate output ($locale)", preview == generated,
+                  "preview=$preview\n        generated=$generated")
+        }
     }
 
     /** `translatable="false"` in the template must be invisible to BOTH generate and export. */

@@ -49,7 +49,7 @@ Built for the `app/` module layout, but every directory is configurable.
 | **Stable key order** | A key keeps the position it already has in the locale file; new keys are inserted next to their template neighbour. Regenerating produces a reviewable diff instead of delete-here / add-there noise. Toggleable. |
 | **Full Replace mode** | Overwrites output entirely from CSV. JSON path strings (`tasks_json_file_path`) are still generated with the correct locale suffix. |
 | **Smart asset detection** | Auto-filters Lottie animations and non-translatable config files into a collapsible "Ignored" group. |
-| **Field configuration** | Per-asset tick-box field selector with a live side-by-side JSON preview (EN vs translated reference). |
+| **Field configuration** | Per-asset tick-box field selector with a live side-by-side preview that resolves values exactly as Generate does (spreadsheet → locale file → English), colour-codes translated vs still-English, and counts each source. |
 | **Exception report** | Per-locale Markdown report: added / changed keys, missing translations, CSV conflicts, skipped arrays, unmatched JSON fields. |
 
 ### Export (project → Excel)
@@ -584,7 +584,8 @@ src/main/kotlin/com/paulbaker/localize/
 │   │                                  # JSON path strings always written, never skipped
 │   ├── JsonLocalizer.kt               # Recursive JSON translation + field / dataKey detection
 │   │                                  # Lottie & text-free config classification (ignoreReason)
-│   └── ExcelExporter.kt               # values-*/ + assets/ → .xlsx (Apache POI, 3 sheets)
+│   ├── ExcelExporter.kt               # values-*/ + assets/ → .xlsx (Apache POI, 3 sheets)
+│   └── JsonPreview.kt                 # what JsonLocalizer would write, without writing it
 ├── ui/
 │   ├── MainPanel.kt                   # CardLayout root: dashboard | localize | export
 │   ├── DashboardPanel.kt              # Rounded hover cards for tool selection
@@ -625,6 +626,8 @@ java -cp "$CP" com.paulbaker.localize.DevCheck
 **Merge mode** — the locale file is parsed once per run and reused for three purposes: the per-string / per-item fallback, key-order preservation, and the added/changed diff in the report. CDATA-wrapped values are re-wrapped on write-back; preserved array items are re-emitted verbatim so their original encoding survives untouched. JSON reads the existing `*_{locale}.json` as a recursive fallback tree. Full Replace always writes the output file; Merge skips writing when nothing was resolved, so a first run can't create empty files.
 
 **`translatable="false"`** — an element carrying it is owned outright by the template: by default it is never written to a locale file and never exported for translation. The generator drops it while walking the template; the exporter filters it out of both the `XML Strings` and `String Arrays` sheets. The attribute is matched case-insensitively and tolerates spacing, since hand-edited XML varies. The opt-in override writes such an element only from a source value — never from the Merge fallback — and every element is accounted for in one of the report's two non-translatable sections.
+
+**The asset preview shares the localizer's resolution order** — `JsonPreview` sits in `core/` beside `JsonLocalizer`, not in the dialog, because a preview is only worth having if it cannot disagree with the real output; keeping both orders side by side makes a change to one visibly a change to the other. A regression check asserts the preview tree equals the file `JsonLocalizer` writes. The dialog previously read only the existing locale file, so a locale that had never been generated previewed as English no matter how complete the spreadsheet was, and coloured every selected field green whether or not it had been translated.
 
 **JSON array items are paired by identity** — the Merge fallback, the Excel export and the config preview all line an item up with the same item elsewhere via its `id` (or `name`/`key`/`type`), never via its array index. Positional pairing looks fine until the list is reordered or an entry is inserted, at which point every item below inherits a neighbour's text — output that is silently wrong is worse than output that is visibly English. An item with no matching identity gets no fallback and stays English, and the report records it.
 

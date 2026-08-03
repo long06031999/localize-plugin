@@ -13,9 +13,16 @@ import kotlin.io.path.writeText
 class LocalizeRunner {
 
     fun run(config: LocalizeConfig, logger: (String, OutputLevel) -> Unit) =
-        generate(loadCsvs(config, logger), config, logger)
+        generate(loadSources(config, logger), config, logger)
 
-    private fun loadCsvs(config: LocalizeConfig, logger: (String, OutputLevel) -> Unit): TranslationDb {
+    /**
+     * Builds the lookup DB from the configured spreadsheets. Public because the asset preview
+     * needs the same DB to show what Generate will produce, without generating anything.
+     */
+    fun loadSources(
+        config: LocalizeConfig,
+        logger: (String, OutputLevel) -> Unit = { _, _ -> }
+    ): TranslationDb {
         val langMap = config.selectedLanguages  // csv_col → locale
 
         // ── Phase 1: Load CSVs ─────────────────────────────────────────────────

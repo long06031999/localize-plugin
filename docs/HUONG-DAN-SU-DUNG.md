@@ -383,8 +383,22 @@ Bấm **⚙** cạnh tên asset:
 
 - Danh sách field là **toàn bộ** field dạng chữ trong file JSON, kể cả field lồng sâu bên trong
 - Plugin tick sẵn những field mà nó đoán là cần dịch, bằng cách so file gốc với file `_ko.json` đang có
-- Bấm tick / bỏ tick để xem ngay kết quả ở khung phải: **màu xanh** là chỗ sẽ được thay bằng bản dịch
 - Ô chọn ngôn ngữ ở góc trên phải để xem thử với ngôn ngữ khác
+
+**Khung phải cho biết chính xác Generate sẽ ghi ra gì**, phân giải theo đúng thứ tự lúc chạy thật: CSV → file locale đang có → tiếng Anh.
+
+| Màu ở khung phải | Nghĩa |
+|---|---|
+| **Xanh** | Giá trị **đã được dịch** (khác tiếng Anh) |
+| **Cam** | Field được tick nhưng **vẫn còn tiếng Anh** — chưa có bản dịch |
+
+Dòng trạng thái ngay dưới danh sách field đếm rõ từng nguồn, ví dụ:
+
+```
+12 from CSV  ·  3 kept from features_ja.json  ·  5 still English
+```
+
+Nếu file `features_{ngôn_ngữ}.json` chưa tồn tại, quá lớn, hay lỗi syntax, dòng này sẽ ghi rõ lý do (`⚠ features_ja.json not found`) chứ không im lặng hiện tiếng Anh.
 
 > Chỉ tick những field là **câu chữ cho người dùng đọc**. Đừng tick các field kiểu `resource`, `type`, `id`, `icon` — đó là tên file hoặc mã, dịch vào là app lỗi.
 
@@ -679,6 +693,19 @@ Mở report, tìm theo thứ tự:
 1. **XML Keys Not Found in CSV** — CSV chưa có key này
 2. **Non-Translatable — Skipped** — string bị đánh dấu `translatable="false"`
 3. **Skipped String-Arrays** — nằm trong array bị bỏ vì thiếu item khác
+
+### Preview JSON hiện tiếng Anh dù CSV đã có bản dịch
+
+Bản cũ chỉ đọc file `features_{ngôn_ngữ}.json` đã tồn tại, **không đọc CSV**. Nên ngôn ngữ nào chưa generate lần nào là preview luôn ra tiếng Anh, và nhãn locale ở khung phải cũng không đổi theo dropdown nên không ai biết đang xem ngôn ngữ nào. Bản hiện tại đọc CSV trước, và nhãn luôn khớp dropdown.
+
+Nếu vẫn thấy tiếng Anh, đọc dòng trạng thái dưới danh sách field — nó nói rõ nguyên nhân:
+
+| Dòng trạng thái | Nghĩa |
+|---|---|
+| `N still English` (không có `from CSV`) | CSV chưa được chọn ở panel, hoặc câu tiếng Anh trong JSON không khớp câu trong CSV |
+| `⚠ ... not found` | Chưa có file locale — bình thường nếu chưa generate; CSV vẫn được dùng |
+| `⚠ ... too large to preview` | File > 300 KB. Không preview được nhưng Generate vẫn xử lý đủ |
+| `⚠ ... could not be parsed` | File locale bị lỗi syntax JSON, cần sửa tay |
 
 ### File JSON dịch ra bị lẫn nội dung của item khác
 
