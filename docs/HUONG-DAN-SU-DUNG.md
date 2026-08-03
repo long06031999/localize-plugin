@@ -1,6 +1,6 @@
 # Localize Tool — Hướng dẫn sử dụng
 
-Hướng dẫn dành cho người dùng plugin. Không yêu cầu kiến thức về code.
+Hướng dẫn dành cho người dùng plugin.
 
 ---
 
@@ -383,8 +383,22 @@ Bấm **⚙** cạnh tên asset:
 
 - Danh sách field là **toàn bộ** field dạng chữ trong file JSON, kể cả field lồng sâu bên trong
 - Plugin tick sẵn những field mà nó đoán là cần dịch, bằng cách so file gốc với file `_ko.json` đang có
-- Bấm tick / bỏ tick để xem ngay kết quả ở khung phải: **màu xanh** là chỗ sẽ được thay bằng bản dịch
 - Ô chọn ngôn ngữ ở góc trên phải để xem thử với ngôn ngữ khác
+
+**Khung phải cho biết chính xác Generate sẽ ghi ra gì**, phân giải theo đúng thứ tự lúc chạy thật: CSV → file locale đang có → tiếng Anh.
+
+| Màu ở khung phải | Nghĩa |
+|---|---|
+| **Xanh** | Giá trị **đã được dịch** (khác tiếng Anh) |
+| **Cam** | Field được tick nhưng **vẫn còn tiếng Anh** — chưa có bản dịch |
+
+Dòng trạng thái ngay dưới danh sách field đếm rõ từng nguồn, ví dụ:
+
+```
+12 from CSV  ·  3 kept from features_ja.json  ·  5 still English
+```
+
+Nếu file `features_{ngôn_ngữ}.json` chưa tồn tại, quá lớn, hay lỗi syntax, dòng này sẽ ghi rõ lý do (`⚠ features_ja.json not found`) chứ không im lặng hiện tiếng Anh.
 
 > Chỉ tick những field là **câu chữ cho người dùng đọc**. Đừng tick các field kiểu `resource`, `type`, `id`, `icon` — đó là tên file hoặc mã, dịch vào là app lỗi.
 
@@ -411,6 +425,32 @@ Bấm **⚙** ở góc trên phải panel Localize.
 **Chỉ dùng Full Replace** khi CSV của bạn là nguồn đầy đủ và bạn muốn dọn sạch những string cũ không còn dùng.
 
 Với `<string-array>` và `<plurals>`, chế độ Merge còn thông minh hơn: nếu một array có 10 item mà CSV chỉ có 9, plugin giữ lại đúng item thứ 10 từ file cũ thay vì bỏ cả array.
+
+#### Merge áp dụng cho file JSON thế nào
+
+Có, chế độ này áp cho cả file JSON:
+
+- **Merge** — plugin đọc file `*_{ngôn_ngữ}.json` đang có làm nguồn dự phòng. Field nào CSV có thì lấy từ CSV; field nào CSV không có mà file cũ đã có bản dịch thì **giữ lại bản dịch cũ**.
+- **Full Replace** — không dùng file cũ. Field nào CSV không có sẽ **giữ nguyên tiếng Anh**, và được liệt kê trong report ở mục *JSON Fields Not Matched*.
+
+Khi lấy lại bản dịch cũ, plugin ghép từng item theo **id riêng của nó** (`id`, hoặc `name` / `key` / `type` nếu không có `id`) — **không** ghép theo vị trí trong danh sách. Điều này quan trọng: nếu file cũ có thứ tự khác, hoặc bạn vừa thêm/xoá một item, thì ghép theo vị trí sẽ khiến mỗi item nhận bản dịch của item khác. Item nào không tìm được id tương ứng trong file cũ thì giữ nguyên tiếng Anh — thà thấy tiếng Anh còn hơn thấy nội dung của tính năng khác.
+
+> Nếu item trong JSON của bạn **không có** field nào kiểu `id` / `name` / `key` / `type`, plugin buộc phải ghép theo vị trí. Trường hợp này nên tránh thêm / xoá / đảo item giữa các lần chạy.
+
+### JSON Assets — "Keep translations the CSV doesn't cover"
+
+**Mặc định: tắt. Chỉ có tác dụng ở chế độ Full Replace** (Merge vốn đã luôn giữ).
+
+| | Hành vi ở Full Replace |
+|---|---|
+| **Tắt** | Field nào CSV không có → **về tiếng Anh**, và được liệt kê trong report ở mục *JSON Fields Not Matched* |
+| **Bật** | Field nào CSV không có → **giữ bản dịch đang có** trong file locale (ghép theo `id`) |
+
+Dùng khi CSV chỉ cover một phần asset: bạn muốn Full Replace để dọn sạch XML, nhưng không muốn mất bản dịch JSON cũ.
+
+> **Đánh đổi:** khi bật, Full Replace sẽ **không bao giờ dọn được** nội dung JSON cũ. Một câu đã bị xoá khỏi CSV vẫn tồn tại mãi trong file locale. Report có mục *JSON Fields Kept From Previous File* đếm và liệt kê chính xác những field này — nên xem qua sau mỗi lần chạy.
+
+Muốn dọn sạch hoàn toàn: **tắt** setting này, chạy Full Replace một lần (mọi thứ CSV không cover sẽ về tiếng Anh), rồi bật lại nếu cần.
 
 ### Key Order — "Keep the position each key already has"
 
@@ -486,6 +526,7 @@ Sau mỗi lần Generate, plugin ghi một file `localize_report_{ngôn_ngữ}.m
 | **CSV Conflicts** | Cùng một key nhưng 2 file CSV ghi khác nhau. Plugin lấy theo `android_only` | Nhắc team dịch sửa cho khớp |
 | **XML Keys Not Found in CSV** | Key có trong `strings.xml` nhưng CSV không có | Gửi danh sách này cho team dịch |
 | **JSON Fields Not Matched** | Field JSON không tìm được bản dịch, đang giữ nguyên tiếng Anh | Bổ sung câu đó vào CSV |
+| **JSON Fields Kept From Previous File** | Field lấy lại bản dịch cũ vì CSV không có. **Không** nằm trong CSV hiện tại | Xem qua để biết phần nào của asset chưa được cover; bổ sung vào CSV nếu cần quản lý tập trung |
 | **Skipped String-Arrays** | Array bị bỏ vì có item không có bản dịch | Xem cột `Missing items` để biết thiếu item nào |
 
 > **Vì sao array thiếu 1 item lại bỏ cả array?** Vì nếu ghi ra một array nửa Hàn nửa Anh thì trên app sẽ hiện lộn xộn, khó phát hiện. Bỏ hẳn thì app dùng lại array tiếng Anh — nhìn là biết ngay còn thiếu. Ở chế độ Merge, nếu file cũ đã có item đó thì plugin giữ lại và không bỏ array.
@@ -652,6 +693,31 @@ Mở report, tìm theo thứ tự:
 1. **XML Keys Not Found in CSV** — CSV chưa có key này
 2. **Non-Translatable — Skipped** — string bị đánh dấu `translatable="false"`
 3. **Skipped String-Arrays** — nằm trong array bị bỏ vì thiếu item khác
+
+### Preview JSON hiện tiếng Anh dù CSV đã có bản dịch
+
+Bản cũ chỉ đọc file `features_{ngôn_ngữ}.json` đã tồn tại, **không đọc CSV**. Nên ngôn ngữ nào chưa generate lần nào là preview luôn ra tiếng Anh, và nhãn locale ở khung phải cũng không đổi theo dropdown nên không ai biết đang xem ngôn ngữ nào. Bản hiện tại đọc CSV trước, và nhãn luôn khớp dropdown.
+
+Nếu vẫn thấy tiếng Anh, đọc dòng trạng thái dưới danh sách field — nó nói rõ nguyên nhân:
+
+| Dòng trạng thái | Nghĩa |
+|---|---|
+| `N still English` (không có `from CSV`) | CSV chưa được chọn ở panel, hoặc câu tiếng Anh trong JSON không khớp câu trong CSV |
+| `⚠ ... not found` | Chưa có file locale — bình thường nếu chưa generate; CSV vẫn được dùng |
+| `⚠ ... too large to preview` | File > 300 KB. Không preview được nhưng Generate vẫn xử lý đủ |
+| `⚠ ... could not be parsed` | File locale bị lỗi syntax JSON, cần sửa tay |
+
+### File JSON dịch ra bị lẫn nội dung của item khác
+
+Ví dụ item `id: 12` (đúng ra là *Sign in to sync*) lại mang title của *Deep Research*.
+
+Bản plugin cũ ghép item với file dịch cũ **theo vị trí**, nên khi thứ tự khác nhau là nội dung bị lẫn sang nhau. Bản hiện tại ghép theo `id`, không còn lỗi này.
+
+Nếu vẫn thấy nội dung lệch, kiểm tra theo thứ tự:
+
+1. Item đó trong JSON có field `id` (hoặc `name` / `key` / `type`) không? Nếu không có, plugin phải ghép theo vị trí — thêm `id` vào là hết lỗi.
+2. Câu tiếng Anh trong CSV có khớp **chính xác** với trong file JSON không? Rất hay lệch ở **dấu câu cuối**: JSON ghi `Write professional emails in seconds` mà CSV ghi `Write professional emails in seconds.` (có dấu chấm) là không khớp.
+3. Xem mục *JSON Fields Not Matched* trong report — những câu nằm ở đó là những câu CSV chưa có.
 
 ### Array bị mất emoji hoặc lấy sai bản dịch
 

@@ -252,11 +252,15 @@ class ExportPanel(val project: Project) : JPanel(BorderLayout()) {
                 font = font.deriveFont(14f); cursor = Cursor(Cursor.HAND_CURSOR); preferredSize = Dimension(28, 24)
                 isVisible = row.assetBox.isSelected
                 addActionListener {
+                    // Same suffix pattern used to pick the base file, so region-qualified
+                    // locales (es-rES, zh-rCN, pt-rBR) are offered too — the plain _[a-z]{2}
+                    // form silently dropped every one of them from this list.
+                    val localeSuffix = Regex("_([a-z]{2}(-r[A-Z]{2})?)$")
                     val locales = dir.toFile().listFiles { f -> f.isDirectory }?.flatMap { sd ->
-                        sd.listFiles { f -> f.extension == "json" &&
-                            f.nameWithoutExtension.contains(Regex("_[a-z]{2}$")) }
-                            ?.map { it.nameWithoutExtension.substringAfterLast("_") } ?: emptyList()
-                    }?.distinct() ?: emptyList()
+                        sd.listFiles { f -> f.extension == "json" }
+                            ?.mapNotNull { localeSuffix.find(it.nameWithoutExtension)?.groupValues?.get(1) }
+                            ?: emptyList()
+                    }?.distinct()?.sorted() ?: emptyList()
                     val dialog = AssetConfigDialog(project, withKey, row.selectedFields, locales)
                     if (dialog.showAndGet()) {
                         row.selectedFields = dialog.selectedFields().toMutableList()

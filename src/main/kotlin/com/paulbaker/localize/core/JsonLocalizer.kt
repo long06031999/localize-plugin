@@ -16,29 +16,51 @@ import kotlin.io.path.writeText
 
 class JsonLocalizer(private val db: TranslationDb) {
 
-    data class JsonResult(val unmatched: List<UnmatchedField>)
+    data class JsonResult(
+        val unmatched: List<UnmatchedField>,
+        /** Fields the CSV didn't cover that kept the value already in the locale file. */
+        val preserved: List<PreservedField> = emptyList()
+    )
     data class UnmatchedField(val context: String, val value: String)
+    data class PreservedField(val context: String, val value: String)
+
+    /** Collects what happened during one walk, so translateElement stays at six parameters. */
+    private class Acc {
+        val unmatched = mutableListOf<UnmatchedField>()
+        val preserved = mutableListOf<PreservedField>()
+    }
 
     private val gson = GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create()
 
-    fun localize(asset: AssetConfig, locale: String, suffix: String, mode: GenerateMode = GenerateMode.MERGE): JsonResult {
+    /**
+     * @param keepExisting extends the existing-file fallback to Full Replace. Merge always uses
+     *   it; this flag only decides whether Full Replace does too.
+     */
+    fun localize(
+        asset: AssetConfig,
+        locale: String,
+        suffix: String,
+        mode: GenerateMode = GenerateMode.MERGE,
+        keepExisting: Boolean = false
+    ): JsonResult {
         val basePath = asset.dir.resolve(asset.baseFile)
         if (!basePath.exists()) return JsonResult(emptyList())
 
         val root = JsonParser.parseString(basePath.readText(Charsets.UTF_8))
-        val unmatched = mutableListOf<UnmatchedField>()
+        val acc  = Acc()
         val fieldsSet = asset.translateFields.ifEmpty { DEFAULT_TRANSLATE_FIELDS }.toSet()
 
-        // Merge mode: load existing output as fallback for unmatched fields
+        // Load the existing output as a fallback for fields the CSV doesn't cover.
         val outputPath = asset.dir.resolve("${basePath.toFile().nameWithoutExtension}_$suffix.json")
-        val existingRoot = if (mode == GenerateMode.MERGE && outputPath.exists())
+        val useExisting  = mode == GenerateMode.MERGE || keepExisting
+        val existingRoot = if (useExisting && outputPath.exists())
             runCatching { JsonParser.parseString(outputPath.readText(Charsets.UTF_8)) }.getOrNull()
         else null
 
-        val result = translateElement(root, fieldsSet, locale, asset.name, unmatched, existingRoot)
+        val result = translateElement(root, fieldsSet, locale, asset.name, acc, existingRoot)
 
         outputPath.writeText(gson.toJson(result), Charsets.UTF_8)
-        return JsonResult(unmatched)
+        return JsonResult(acc.unmatched, acc.preserved)
     }
 
     /**
@@ -50,8 +72,8 @@ class JsonLocalizer(private val db: TranslationDb) {
         fields: Set<String>,
         locale: String,
         ctx: String,
-        unmatched: MutableList<UnmatchedField>,
-        existing: JsonElement? = null   // Merge mode: existing output at same structural position
+        acc: Acc,
+        existing: JsonElement? = null   // existing output at the same structural position
     ): JsonElement = when {
         el.isJsonObject -> {
             val obj = el.asJsonObject
@@ -64,12 +86,21 @@ class JsonLocalizer(private val db: TranslationDb) {
                         child.isJsonPrimitive && child.asJsonPrimitive.isString -> {
                             val v = child.asString.takeIf { it.isNotEmpty() }
                             if (v != null) {
-                                val tr = db.lookup("", v, locale)
-                                    ?: existingObj?.get(key)?.takeIf {  // Merge: use existing if no CSV match
+                                val fromCsv = db.lookup("", v, locale)
+                                val fromExisting = if (fromCsv != null) null else
+                                    existingObj?.get(key)?.takeIf {
                                         it.isJsonPrimitive && it.asJsonPrimitive.isString && it.asString.isNotEmpty()
                                     }?.asString
-                                if (tr != null) out.addProperty(key, tr)
-                                else { unmatched += UnmatchedField("$ctx.$key", v); out.add(key, child) }
+                                when {
+                                    fromCsv != null -> out.addProperty(key, fromCsv)
+                                    // Kept from the previous run — recorded, because a value that
+                                    // came from neither the CSV nor English is the one worth auditing.
+                                    fromExisting != null -> {
+                                        out.addProperty(key, fromExisting)
+                                        acc.preserved += PreservedField("$ctx.$key", v)
+                                    }
+                                    else -> { acc.unmatched += UnmatchedField("$ctx.$key", v); out.add(key, child) }
+                                }
                             } else out.add(key, child)
                         }
                         child.isJsonArray -> {
@@ -80,25 +111,46 @@ class JsonLocalizer(private val db: TranslationDb) {
                                 if (item.isJsonPrimitive && item.asJsonPrimitive.isString && item.asString.isNotEmpty()) {
                                     val tr = db.lookup("", item.asString, locale)
                                     if (tr != null) translated.add(tr)
-                                    else { unmatched += UnmatchedField("$ctx.$key[$i]", item.asString); translated.add(item) }
-                                } else translated.add(translateElement(item, fields, locale, "$ctx.$key[$i]", unmatched))
+                                    else { acc.unmatched += UnmatchedField("$ctx.$key[$i]", item.asString); translated.add(item) }
+                                } else translated.add(translateElement(item, fields, locale, "$ctx.$key[$i]", acc))
                             }
                             out.add(key, translated)
                         }
-                        else -> out.add(key, translateElement(child, fields, locale, "$ctx.$key", unmatched, existingObj?.get(key)))
+                        else -> out.add(key, translateElement(child, fields, locale, "$ctx.$key", acc, existingObj?.get(key)))
                     }
                 } else {
-                    out.add(key, translateElement(child, fields, locale, "$ctx.$key", unmatched, existingObj?.get(key)))
+                    out.add(key, translateElement(child, fields, locale, "$ctx.$key", acc, existingObj?.get(key)))
                 }
             }
             out
         }
         el.isJsonArray -> {
             val existingArr = existing?.takeIf { it.isJsonArray }?.asJsonArray
+            // Pair each item with the SAME item in the existing output, matched by its own
+            // identity (id / name / key / type) — never by position.
+            //
+            // Positional pairing hands an item whatever used to sit at that index, so as soon
+            // as the list is reordered, or an entry is inserted or removed, every item below
+            // inherits a neighbour's text. The item then silently carries a translation that
+            // belongs to a different feature: far worse than staying in English, because
+            // nothing about the output looks wrong.
+            //
+            // An item whose identity is absent from the existing file gets NO fallback: it is
+            // new to this locale, so English is the honest answer and the report says so.
+            val existingById = HashMap<String, JsonElement>()
+            existingArr?.forEach { e -> itemIdentity(e)?.let { existingById.putIfAbsent(it, e) } }
+
             JsonArray().also { out ->
                 el.asJsonArray.forEachIndexed { i, item ->
-                    val existingItem = if (existingArr != null && i < existingArr.size()) existingArr[i] else null
-                    out.add(translateElement(item, fields, locale, "$ctx[$i]", unmatched, existingItem))
+                    val identity = itemIdentity(item)
+                    val existingItem = when {
+                        identity != null -> existingById[identity]
+                        // No identity to match on (primitives, or objects without any id field)
+                        // — position is all there is.
+                        existingArr != null && i < existingArr.size() -> existingArr[i]
+                        else -> null
+                    }
+                    out.add(translateElement(item, fields, locale, "$ctx[$i]", acc, existingItem))
                 }
             }
         }
@@ -279,6 +331,26 @@ class JsonLocalizer(private val db: TranslationDb) {
     companion object {
         private val ID_KEYS = listOf("id", "name", "key", "type")
         private val ANIMATION_PREFIXES = listOf("anim_", "animation_", "lottie_")
+
+        /**
+         * Stable identity of one array item, used to line it up with the same item in an
+         * existing localized file or in a locale file being exported.
+         *
+         * Returns null when the element carries no usable id field — callers must then decide
+         * for themselves whether positional matching is acceptable.
+         */
+        fun itemIdentity(el: JsonElement): String? {
+            if (!el.isJsonObject) return null
+            val obj = el.asJsonObject
+            ID_KEYS.forEach { key ->
+                val v = obj.get(key)
+                if (v != null && v.isJsonPrimitive) {
+                    val s = v.asString
+                    if (s.isNotEmpty()) return "$key=$s"
+                }
+            }
+            return null
+        }
     }
 
 }

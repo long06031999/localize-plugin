@@ -157,6 +157,14 @@ class ConfigPersistence(project: Project) {
         get() = data.get(KEY_OVERRIDE_NON_TRANSLATABLE)?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false
         set(v) { data.addProperty(KEY_OVERRIDE_NON_TRANSLATABLE, v); flush() }
 
+    /**
+     * Off (default): in Full Replace, a JSON field the CSV doesn't cover falls back to English.
+     * On: it keeps whatever the locale file already had. Merge behaves this way regardless.
+     */
+    var keepExistingJsonFields: Boolean
+        get() = data.get(KEY_KEEP_EXISTING_JSON)?.takeIf { it.isJsonPrimitive }?.asBoolean ?: false
+        set(v) { data.addProperty(KEY_KEEP_EXISTING_JSON, v); flush() }
+
     // ── Directory overrides ───────────────────────────────────────────────────
 
     /** Custom values/ directory. Empty = use default (app/src/main/res/values). */
@@ -294,6 +302,7 @@ class ConfigPersistence(project: Project) {
         private const val KEY_GENERATE_MODE   = "generateMode"
         private const val KEY_PRESERVE_ORDER  = "preserveKeyOrder"
         private const val KEY_OVERRIDE_NON_TRANSLATABLE = "overrideNonTranslatable"
+        private const val KEY_KEEP_EXISTING_JSON        = "keepExistingJsonFields"
         private const val KEY_VALUES_DIR      = "valuesDir"
         private const val KEY_ASSETS_DIR      = "assetsDir"
         private const val KEY_REPORT_DIR      = "reportDir"

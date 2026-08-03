@@ -29,6 +29,7 @@ Built for the `app/` module layout, but every directory is configurable.
 - [Tool 2 — Export to Excel](#tool-2--export-to-excel)
 - [Configuration File](#configuration-file)
 - [Architecture](#architecture)
+- [CI / CD](#ci--cd)
 - [Building from Source](#building-from-source)
 - [Adding a New Language](#adding-a-new-language)
 
@@ -44,12 +45,12 @@ Built for the `app/` module layout, but every directory is configurable.
 | **Smart language detection** | Auto-detects languages from all 3 CSV inputs, merges them, deduplicates by locale code. Supports English names, ISO codes, aliases, native names, Java `Locale` fallback, and manual entry. |
 | **XML generation** | Full support for `<string>`, `<string-array>`, `<plurals>`, CDATA, HTML tags, format strings. |
 | **`translatable="false"`** | Honoured everywhere — dropped from generated locale files and withheld from the Excel export. Matched case-insensitively. An opt-in setting overrides it when the source supplies a translation; either way the report accounts for every one. |
-| **JSON asset generation** | Recursive translation of nested JSON at any depth, including string arrays inside selected fields. |
+| **JSON asset generation** | Recursive translation of nested JSON at any depth, including string arrays inside selected fields. Merge pairs array items by their own `id`/`name`/`key`/`type`, never by position. |
 | **Merge mode** | Preserves existing translations for strings not in the current CSV — safe for incremental updates. Falls back per `<string-array>` item and per `<plurals>` quantity, so one missing translation no longer drops the whole block. |
 | **Stable key order** | A key keeps the position it already has in the locale file; new keys are inserted next to their template neighbour. Regenerating produces a reviewable diff instead of delete-here / add-there noise. Toggleable. |
 | **Full Replace mode** | Overwrites output entirely from CSV. JSON path strings (`tasks_json_file_path`) are still generated with the correct locale suffix. |
 | **Smart asset detection** | Auto-filters Lottie animations and non-translatable config files into a collapsible "Ignored" group. |
-| **Field configuration** | Per-asset tick-box field selector with a live side-by-side JSON preview (EN vs translated reference). |
+| **Field configuration** | Per-asset tick-box field selector with a live side-by-side preview that resolves values exactly as Generate does (spreadsheet → locale file → English), colour-codes translated vs still-English, and counts each source. |
 | **Exception report** | Per-locale Markdown report: added / changed keys, missing translations, CSV conflicts, skipped arrays, unmatched JSON fields. |
 
 ### Export (project → Excel)
@@ -346,6 +347,7 @@ Click **⚙** (top-right of the Localize panel):
 | Generate Mode | Merge | Merge vs Full Replace |
 | Keep the position each key already has | on | Key order in the locale files — see below |
 | Translate anyway when the source provides a value | off | `translatable="false"` override — see below |
+| Keep translations the CSV doesn't cover | off | JSON only, Full Replace only — see below |
 | Values dir | `app/src/main/res/values` | XML template source + locale output parent |
 | Assets dir | `app/src/main/assets` | JSON assets scan root |
 | Report dir | project root | Where `localize_report_*.md` is written |
@@ -363,6 +365,12 @@ A locale file rarely lists its keys in the same order as `values/strings.xml` �
 The setting applies to `<string>`, `<string-array>` and `<plurals>` alike, and works in both Merge and Full Replace (it only decides ordering, never content).
 
 ---
+
+### Keeping JSON fields the CSV doesn't cover
+
+Merge always falls back to the value already in `*_{locale}.json`. Full Replace does not — a field the CSV doesn't cover reverts to English and is reported. Tick **Keep translations the CSV doesn't cover** to extend the fallback to Full Replace, which is what you want when the spreadsheet only covers part of an asset.
+
+The trade-off is real and worth stating: with it on, Full Replace can never clear stale JSON text. A string dropped from the CSV lives on in the locale file indefinitely. The report therefore counts and lists every field kept this way under **JSON Fields Kept From Previous File** — that count is exactly the blind spot, so it belongs in front of the reviewer rather than buried.
 
 ### `translatable="false"`
 
@@ -529,6 +537,7 @@ Everything lives in `{project}/.idea/localize-plugin.json`, human-readable and s
   "generateMode": "MERGE",
   "preserveKeyOrder": true,
   "overrideNonTranslatable": false,
+  "keepExistingJsonFields": false,
   "valuesDir": "",
   "assetsDir": "",
   "reportDir": "",
@@ -576,7 +585,8 @@ src/main/kotlin/com/paulbaker/localize/
 │   │                                  # JSON path strings always written, never skipped
 │   ├── JsonLocalizer.kt               # Recursive JSON translation + field / dataKey detection
 │   │                                  # Lottie & text-free config classification (ignoreReason)
-│   └── ExcelExporter.kt               # values-*/ + assets/ → .xlsx (Apache POI, 3 sheets)
+│   ├── ExcelExporter.kt               # values-*/ + assets/ → .xlsx (Apache POI, 3 sheets)
+│   └── JsonPreview.kt                 # what JsonLocalizer would write, without writing it
 ├── ui/
 │   ├── MainPanel.kt                   # CardLayout root: dashboard | localize | export
 │   ├── DashboardPanel.kt              # Rounded hover cards for tool selection
@@ -590,17 +600,13 @@ src/main/kotlin/com/paulbaker/localize/
 └── DevCheck.kt                        # Dev-only harness: end-to-end generator checks
 ```
 
-`DevCheck` is not wired into the plugin; it covers key ordering, array item resolution and per-item Merge fallback. Run it against the compiled classes:
+`DevCheck` is not wired into the plugin; it covers key ordering, array item resolution, per-item Merge fallback, `translatable="false"`, JSON identity pairing, preview/Generate parity and dashboard layout. CI runs it as a gate:
 
 ```bash
-./gradlew compileKotlin
-IJ=$(find ~/.gradle/caches -path '*ideaIC*/lib' -maxdepth 8 -type d | head -1)
-CP="build/classes/kotlin/main:$IJ/*"
-for j in $(find ~/.gradle/caches/modules-2 -name '*.jar' | grep -vE 'sources|javadoc' \
-    | grep -E 'kotlin-stdlib-2.0.0.jar|/poi-5.2.3.jar|poi-ooxml-5.2.3.jar|poi-ooxml-lite|xmlbeans|commons-compress|commons-codec|commons-collections4|SparseBitSet|curvesapi|gson-2.10.1.jar' \
-    | sort -u); do CP="$CP:$j"; done
-java -cp "$CP" com.paulbaker.localize.DevCheck
+./gradlew devCheck
 ```
+
+It exits non-zero on failure. The task pulls in `compileClasspath` as well as `runtimeClasspath` because the IntelliJ Platform jars live only on the former — the IDE normally supplies them at runtime — plus a `devCheckOnly` configuration for Gson, kept out of `implementation` so no second copy ships in the plugin zip.
 
 ### Key Design Decisions
 
@@ -618,6 +624,10 @@ java -cp "$CP" com.paulbaker.localize.DevCheck
 
 **`translatable="false"`** — an element carrying it is owned outright by the template: by default it is never written to a locale file and never exported for translation. The generator drops it while walking the template; the exporter filters it out of both the `XML Strings` and `String Arrays` sheets. The attribute is matched case-insensitively and tolerates spacing, since hand-edited XML varies. The opt-in override writes such an element only from a source value — never from the Merge fallback — and every element is accounted for in one of the report's two non-translatable sections.
 
+**The asset preview shares the localizer's resolution order** — `JsonPreview` sits in `core/` beside `JsonLocalizer`, not in the dialog, because a preview is only worth having if it cannot disagree with the real output; keeping both orders side by side makes a change to one visibly a change to the other. A regression check asserts the preview tree equals the file `JsonLocalizer` writes. The dialog previously read only the existing locale file, so a locale that had never been generated previewed as English no matter how complete the spreadsheet was, and coloured every selected field green whether or not it had been translated.
+
+**JSON array items are paired by identity** — the Merge fallback, the Excel export and the config preview all line an item up with the same item elsewhere via its `id` (or `name`/`key`/`type`), never via its array index. Positional pairing looks fine until the list is reordered or an entry is inserted, at which point every item below inherits a neighbour's text — output that is silently wrong is worse than output that is visibly English. An item with no matching identity gets no fallback and stays English, and the report records it.
+
 **Lottie detection** — JSON files with `v` + `fr` + `layers` are classified as animations. Files whose sampled strings contain fewer than 2 "human sentence" values (≥8 chars, contains a space, not a URL/identifier) are classified as text-free config.
 
 **Export parsing** — `ExcelExporter` deliberately reuses the same regex approach as the Merge fallback rather than a DOM parser, so exported text is byte-identical to what `XmlGenerator` would preserve.
@@ -628,11 +638,43 @@ java -cp "$CP" com.paulbaker.localize.DevCheck
 
 ---
 
+## CI / CD
+
+`.github/workflows/build.yml` gates every change and publishes builds to GitHub Releases.
+
+| Event | What happens |
+|-------|--------------|
+| Pull request | `devCheck` → `verifyPlugin` → `buildPlugin`; zip uploaded as a workflow artifact. No release, no write token. |
+| Push to `main` | Same, then the `main-latest` **pre-release** is recreated with the new zip — a stable URL for the newest build. |
+| Tag `v*` | Same, then a real release named after the tag, with generated notes. |
+
+`workflow_dispatch` allows a manual run from the Actions tab.
+
+### Cutting a release
+
+```bash
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+The tag is the single source of version truth: CI passes `-PpluginVersion=1.1.0`, which lands in the zip name and in `plugin.xml`. `pluginVersion` in `gradle.properties` is only the fallback for local builds — there is no second place to bump.
+
+### Notes
+
+- The `main-latest` pre-release is deleted and recreated each time (`--cleanup-tag`) so its asset list never accumulates stale zips. Drop that step if a mutating release is unwanted.
+- Concurrency cancels superseded runs per ref, except on tags — a release build always finishes.
+- `~/.gradle` is cached. It matters: the IntelliJ Platform dependency is over a gigabyte.
+- Publishing to the JetBrains Marketplace is *not* wired up. `publishPlugin` plus a `PUBLISH_TOKEN` secret would do it.
+
+---
+
 ## Building from Source
 
 ```bash
-./gradlew buildPlugin           # → build/distributions/localize-plugin-1.0.0.zip
+./gradlew buildPlugin           # → build/distributions/localize-plugin-<version>.zip
 ./gradlew runIde                # Sandbox IDE for development
+./gradlew devCheck              # Run the verification harness (68 checks)
+./gradlew verifyPlugin          # Plugin structure check
 ./gradlew clean buildPlugin     # Clean build
 ```
 

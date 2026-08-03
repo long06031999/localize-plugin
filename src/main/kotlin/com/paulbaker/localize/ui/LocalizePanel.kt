@@ -413,7 +413,12 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
             addActionListener {
                 // languageBoxes key is now the locale code directly
                 val locales = languageBoxes.filter { it.value.isSelected }.keys.toList()
-                val dialog = AssetConfigDialog(project, withKey, row.selectedFields, locales)
+                // Snapshot the config on the EDT; the preview then looks translations up on a
+                // pooled thread without ever touching Swing state.
+                val snapshot = buildConfig()
+                val dialog = AssetConfigDialog(project, withKey, row.selectedFields, locales) { en, loc ->
+                    previewDb(snapshot).lookup("", en, loc)
+                }
                 if (dialog.showAndGet()) {
                     row.selectedFields = dialog.selectedFields().toMutableList()
                     row.config = withKey.copy(translateFields = row.selectedFields)
@@ -520,49 +525,73 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
         ignoredSectionPanel.repaint()
     }
 
+    // ── Config / preview lookup ───────────────────────────────────────────────
+
+    /**
+     * langMap uses the ORIGINAL CSV column names, not locale codes:
+     * {"Korean" → "ko", "Thai" → "th"} so loadCsv/loadArrayCsv can find the right columns.
+     * For mapped CSVs the column name equals the locale code, which is fine since those go
+     * through loadCsvFromNormalized (which ignores langMap anyway).
+     */
+    private fun selectedLangMap(): Map<String, String> = languageBoxes
+        .filter { it.value.isSelected }
+        .map { (locale, _) -> (localeToColumnName[locale] ?: locale) to locale }
+        .toMap()
+
+    /** Must be called on the EDT — it reads checkbox state. */
+    private fun buildConfig() = LocalizeConfig(
+        csvAndroidOnly    = csvPath(csvAndroidField),
+        csvOverlap        = csvPath(csvOverlapField),
+        csvArrays         = csvPath(csvArraysField),
+        projectDir        = projectDir,
+        selectedLanguages = selectedLangMap(),
+        selectedXmlFiles  = xmlBoxes.filter { it.value.isSelected }.keys.toList(),
+        selectedAssets    = assetRows
+            .filter { it.value.assetBox.isSelected }
+            .map { (_, r) -> r.config.copy(translateFields = r.selectedFields) },
+        generateMode     = persistence.generateMode,
+        preserveKeyOrder = persistence.preserveKeyOrder,
+        overrideNonTranslatable = persistence.overrideNonTranslatable,
+        keepExistingJsonFields  = persistence.keepExistingJsonFields,
+        csvMappings  = buildMap {
+            listOf(csvAndroidField, csvOverlapField, csvArraysField).forEach { f ->
+                val path = f.text.trim().takeIf { it.isNotEmpty() } ?: return@forEach
+                persistence.getCsvMapping(path)?.let { put(path, it) }
+            }
+        },
+        valuesDir    = persistence.valuesDir.takeIf { it.isNotEmpty() }?.let { Paths.get(it) },
+        assetsDir    = persistence.assetsDir.takeIf { it.isNotEmpty() }?.let { Paths.get(it) },
+        reportDir    = persistence.reportDir.takeIf { it.isNotEmpty() }?.let { Paths.get(it) },
+    )
+
+    // Translation DB for the asset preview. Parsing the spreadsheets is far too slow to redo on
+    // every locale switch, so it is built once per CSV selection and reused. Called from the
+    // dialog's pooled thread, hence the lock.
+    private var previewDbCache: TranslationDb? = null
+    private var previewDbKey: String = ""
+
+    @Synchronized
+    private fun previewDb(config: LocalizeConfig): TranslationDb {
+        val key = listOf(
+            config.csvAndroidOnly, config.csvOverlap, config.csvArrays,
+            config.selectedLanguages, config.csvMappings.keys
+        ).joinToString("|")
+        previewDbCache?.let { if (previewDbKey == key) return it }
+        val built = LocalizeRunner().loadSources(config)
+        previewDbCache = built
+        previewDbKey   = key
+        return built
+    }
+
     // ── Generate ──────────────────────────────────────────────────────────────
 
     private fun onGenerate() {
-        // Build langMap using ORIGINAL CSV column names (not locale codes).
-        // e.g. {"Korean" → "ko", "Thai" → "th"} so loadCsv/loadArrayCsv can find the right columns.
-        // For mapped CSVs the column name equals the locale code, which is fine since those
-        // CSVs go through loadCsvFromNormalized (which ignores langMap anyway).
-        val selectedLangs = languageBoxes
-            .filter { it.value.isSelected }
-            .mapNotNull { (locale, _) ->
-                val colName = localeToColumnName[locale] ?: locale
-                colName to locale   // colName → locale (e.g. "Korean" → "ko")
-            }
-            .toMap()
-
-        if (selectedLangs.isEmpty()) {
+        if (selectedLangMap().isEmpty()) {
             outputPanel.append("⚠ No languages selected.", OutputLevel.WARN)
             return
         }
 
-        val config = LocalizeConfig(
-            csvAndroidOnly    = csvPath(csvAndroidField),
-            csvOverlap        = csvPath(csvOverlapField),
-            csvArrays         = csvPath(csvArraysField),
-            projectDir        = projectDir,
-            selectedLanguages = selectedLangs,
-            selectedXmlFiles  = xmlBoxes.filter { it.value.isSelected }.keys.toList(),
-            selectedAssets    = assetRows
-                .filter { it.value.assetBox.isSelected }
-                .map { (_, r) -> r.config.copy(translateFields = r.selectedFields) },
-            generateMode     = persistence.generateMode,
-            preserveKeyOrder = persistence.preserveKeyOrder,
-            overrideNonTranslatable = persistence.overrideNonTranslatable,
-            csvMappings  = buildMap {
-                listOf(csvAndroidField, csvOverlapField, csvArraysField).forEach { f ->
-                    val path = f.text.trim().takeIf { it.isNotEmpty() } ?: return@forEach
-                    persistence.getCsvMapping(path)?.let { put(path, it) }
-                }
-            },
-            valuesDir    = persistence.valuesDir.takeIf { it.isNotEmpty() }?.let { Paths.get(it) },
-            assetsDir    = persistence.assetsDir.takeIf { it.isNotEmpty() }?.let { Paths.get(it) },
-            reportDir    = persistence.reportDir.takeIf { it.isNotEmpty() }?.let { Paths.get(it) },
-        )
+        val config = buildConfig()
 
         persistence.saveAll(
             androidOnly = csvAndroidField.text,
