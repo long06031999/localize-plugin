@@ -21,6 +21,7 @@ object DevCheck {
         testPluralsMerge(root.resolve("t5"))
         testInvisibleCharMatch(root.resolve("t6"))
         testNonTranslatableSkipped(root.resolve("t7"))
+        testJsonItemIdentityMerge(root.resolve("t8"))
         testDashboardCentering()
         println(if (failures == 0) "\nALL CHECKS PASSED" else "\n$failures CHECK(S) FAILED")
     }
@@ -222,6 +223,90 @@ object DevCheck {
         gen.generate(tmpl, out, "ko", "ko")
         check("invisible chars: item matched despite U+FE0F", "업무" in out.toFile().readText(),
               out.toFile().readText())
+    }
+
+    /**
+     * Reproduction of the features.json corruption: a Merge run must never hand an item the
+     * previous translation of a DIFFERENT item just because they share an array index.
+     */
+    private fun testJsonItemIdentityMerge(dir: Path) {
+        val assets = dir.resolve("assets/new_features")
+        Files.createDirectories(assets)
+
+        // Base list, in the real project's order
+        assets.resolve("features.json").toFile().writeText("""
+            [
+              {"id": 17, "title": "Image Generator",  "description": "Generate images.",    "image": "a.png"},
+              {"id": 15, "title": "Email Assistant",  "description": "Write emails.",       "image": "b.png"},
+              {"id": 12, "title": "Sign in to sync",  "description": "Carry Premium.",      "image": "c.png"},
+              {"id": 11, "title": "Deep Research",    "description": "Explore any topic.",  "image": "d.png"}
+            ]
+        """.trimIndent(), Charsets.UTF_8)
+
+        // Existing German file from an older run: DIFFERENT order, and id 12 is absent
+        assets.resolve("features_de.json").toFile().writeText("""
+            [
+              {"id": 11, "title": "Tiefenrecherche", "description": "Jedes Thema erkunden.", "image": "d.png"},
+              {"id": 17, "title": "Bildgenerator",   "description": "Bilder erstellen.",     "image": "a.png"},
+              {"id": 15, "title": "E-Mail-Assistent","description": "E-Mails schreiben.",    "image": "b.png"}
+            ]
+        """.trimIndent(), Charsets.UTF_8)
+
+        // CSV covers only "Image Generator" — everything else must come from the existing file
+        // by identity, or stay English.
+        val db = TranslationDb()
+        val csv = dir.resolve("main.csv")
+        csv.toFile().writeText(
+            "android_key,english,german\n" +
+            ",Image Generator,Bildgenerator NEU\n" +
+            ",Generate images.,Bilder erstellen NEU\n",
+            Charsets.UTF_8
+        )
+        db.loadCsv(csv, "android_key", mapOf("german" to "de"))
+
+        val asset = com.paulbaker.localize.config.AssetConfig(
+            "new_features", assets, "features.json", listOf("title", "description"))
+        com.paulbaker.localize.core.JsonLocalizer(db)
+            .localize(asset, "de", "de", GenerateMode.MERGE)
+
+        val out = com.google.gson.JsonParser
+            .parseString(assets.resolve("features_de.json").toFile().readText(Charsets.UTF_8)).asJsonArray
+        fun item(id: Int) = out.first { it.asJsonObject.get("id").asInt == id }.asJsonObject
+        fun field(id: Int, f: String) = item(id).get(f).asString
+
+        check("json merge: order follows the base file",
+              out.map { it.asJsonObject.get("id").asInt } == listOf(17, 15, 12, 11), out.toString())
+        check("json merge: CSV value wins", field(17, "title") == "Bildgenerator NEU", field(17, "title"))
+        // id 15 sits at index 1 in base but index 2 in the old file — the bug's signature
+        check("json merge: item keeps its OWN previous translation",
+              field(15, "title") == "E-Mail-Assistent", field(15, "title"))
+        check("json merge: no neighbour bleed into description",
+              field(15, "description") == "E-Mails schreiben.", field(15, "description"))
+        // id 12 is in neither CSV nor old file → must stay English, NOT become "Tiefenrecherche"
+        check("json merge: unknown item stays English (title)",
+              field(12, "title") == "Sign in to sync", field(12, "title"))
+        check("json merge: unknown item stays English (description)",
+              field(12, "description") == "Carry Premium.", field(12, "description"))
+        check("json merge: non-selected field untouched", field(12, "image") == "c.png", field(12, "image"))
+        check("json merge: last item matched by id, not position",
+              field(11, "title") == "Tiefenrecherche", field(11, "title"))
+
+        // ── Full Replace: no fallback at all, untranslated fields stay English ──
+        assets.resolve("features_de.json").toFile().writeText("""
+            [
+              {"id": 11, "title": "Tiefenrecherche", "description": "Jedes Thema erkunden.", "image": "d.png"}
+            ]
+        """.trimIndent(), Charsets.UTF_8)
+        com.paulbaker.localize.core.JsonLocalizer(db)
+            .localize(asset, "de", "de", GenerateMode.FULL_REPLACE)
+        val out2 = com.google.gson.JsonParser
+            .parseString(assets.resolve("features_de.json").toFile().readText(Charsets.UTF_8)).asJsonArray
+        fun field2(id: Int, f: String) =
+            out2.first { it.asJsonObject.get("id").asInt == id }.asJsonObject.get(f).asString
+
+        check("json replace: CSV value still applied", field2(17, "title") == "Bildgenerator NEU", field2(17, "title"))
+        check("json replace: existing translation NOT reused",
+              field2(11, "title") == "Deep Research", field2(11, "title"))
     }
 
     /** `translatable="false"` in the template must be invisible to BOTH generate and export. */

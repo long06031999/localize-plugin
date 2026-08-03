@@ -1,6 +1,6 @@
 # Localize Tool — Hướng dẫn sử dụng
 
-Hướng dẫn dành cho người dùng plugin. Không yêu cầu kiến thức về code.
+Hướng dẫn dành cho người dùng plugin.
 
 ---
 
@@ -412,6 +412,17 @@ Bấm **⚙** ở góc trên phải panel Localize.
 
 Với `<string-array>` và `<plurals>`, chế độ Merge còn thông minh hơn: nếu một array có 10 item mà CSV chỉ có 9, plugin giữ lại đúng item thứ 10 từ file cũ thay vì bỏ cả array.
 
+#### Merge áp dụng cho file JSON thế nào
+
+Có, chế độ này áp cho cả file JSON:
+
+- **Merge** — plugin đọc file `*_{ngôn_ngữ}.json` đang có làm nguồn dự phòng. Field nào CSV có thì lấy từ CSV; field nào CSV không có mà file cũ đã có bản dịch thì **giữ lại bản dịch cũ**.
+- **Full Replace** — không dùng file cũ. Field nào CSV không có sẽ **giữ nguyên tiếng Anh**, và được liệt kê trong report ở mục *JSON Fields Not Matched*.
+
+Khi lấy lại bản dịch cũ, plugin ghép từng item theo **id riêng của nó** (`id`, hoặc `name` / `key` / `type` nếu không có `id`) — **không** ghép theo vị trí trong danh sách. Điều này quan trọng: nếu file cũ có thứ tự khác, hoặc bạn vừa thêm/xoá một item, thì ghép theo vị trí sẽ khiến mỗi item nhận bản dịch của item khác. Item nào không tìm được id tương ứng trong file cũ thì giữ nguyên tiếng Anh — thà thấy tiếng Anh còn hơn thấy nội dung của tính năng khác.
+
+> Nếu item trong JSON của bạn **không có** field nào kiểu `id` / `name` / `key` / `type`, plugin buộc phải ghép theo vị trí. Trường hợp này nên tránh thêm / xoá / đảo item giữa các lần chạy.
+
 ### Key Order — "Keep the position each key already has"
 
 **Mặc định: bật. Nên để bật.**
@@ -652,6 +663,18 @@ Mở report, tìm theo thứ tự:
 1. **XML Keys Not Found in CSV** — CSV chưa có key này
 2. **Non-Translatable — Skipped** — string bị đánh dấu `translatable="false"`
 3. **Skipped String-Arrays** — nằm trong array bị bỏ vì thiếu item khác
+
+### File JSON dịch ra bị lẫn nội dung của item khác
+
+Ví dụ item `id: 12` (đúng ra là *Sign in to sync*) lại mang title của *Deep Research*.
+
+Bản plugin cũ ghép item với file dịch cũ **theo vị trí**, nên khi thứ tự khác nhau là nội dung bị lẫn sang nhau. Bản hiện tại ghép theo `id`, không còn lỗi này.
+
+Nếu vẫn thấy nội dung lệch, kiểm tra theo thứ tự:
+
+1. Item đó trong JSON có field `id` (hoặc `name` / `key` / `type`) không? Nếu không có, plugin phải ghép theo vị trí — thêm `id` vào là hết lỗi.
+2. Câu tiếng Anh trong CSV có khớp **chính xác** với trong file JSON không? Rất hay lệch ở **dấu câu cuối**: JSON ghi `Write professional emails in seconds` mà CSV ghi `Write professional emails in seconds.` (có dấu chấm) là không khớp.
+3. Xem mục *JSON Fields Not Matched* trong report — những câu nằm ở đó là những câu CSV chưa có.
 
 ### Array bị mất emoji hoặc lấy sai bản dịch
 

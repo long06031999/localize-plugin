@@ -258,9 +258,19 @@ class AssetConfigDialog(
         base.isJsonArray && trans.isJsonArray -> {
             val bArr = base.asJsonArray
             val tArr = trans.asJsonArray
+            // Same rule as JsonLocalizer: pair by item identity, fall back to position only for
+            // items that have none. Pairing by position would preview a neighbour's translation
+            // and make a correct config look broken (or a broken one look fine).
+            val transById = HashMap<String, JsonElement>()
+            tArr.forEach { e -> com.paulbaker.localize.core.JsonLocalizer.itemIdentity(e)?.let { transById.putIfAbsent(it, e) } }
             JsonArray().also { out ->
                 bArr.forEachIndexed { i, bItem ->
-                    val tItem = if (i < tArr.size()) tArr[i] else null
+                    val identity = com.paulbaker.localize.core.JsonLocalizer.itemIdentity(bItem)
+                    val tItem = when {
+                        identity != null -> transById[identity]
+                        i < tArr.size()  -> tArr[i]
+                        else             -> null
+                    }
                     out.add(if (tItem != null) mergeRecursive(bItem, tItem, fields) else bItem)
                 }
             }

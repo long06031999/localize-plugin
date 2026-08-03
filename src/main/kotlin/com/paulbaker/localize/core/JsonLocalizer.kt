@@ -95,9 +95,30 @@ class JsonLocalizer(private val db: TranslationDb) {
         }
         el.isJsonArray -> {
             val existingArr = existing?.takeIf { it.isJsonArray }?.asJsonArray
+            // Pair each item with the SAME item in the existing output, matched by its own
+            // identity (id / name / key / type) — never by position.
+            //
+            // Positional pairing hands an item whatever used to sit at that index, so as soon
+            // as the list is reordered, or an entry is inserted or removed, every item below
+            // inherits a neighbour's text. The item then silently carries a translation that
+            // belongs to a different feature: far worse than staying in English, because
+            // nothing about the output looks wrong.
+            //
+            // An item whose identity is absent from the existing file gets NO fallback: it is
+            // new to this locale, so English is the honest answer and the report says so.
+            val existingById = HashMap<String, JsonElement>()
+            existingArr?.forEach { e -> itemIdentity(e)?.let { existingById.putIfAbsent(it, e) } }
+
             JsonArray().also { out ->
                 el.asJsonArray.forEachIndexed { i, item ->
-                    val existingItem = if (existingArr != null && i < existingArr.size()) existingArr[i] else null
+                    val identity = itemIdentity(item)
+                    val existingItem = when {
+                        identity != null -> existingById[identity]
+                        // No identity to match on (primitives, or objects without any id field)
+                        // — position is all there is.
+                        existingArr != null && i < existingArr.size() -> existingArr[i]
+                        else -> null
+                    }
                     out.add(translateElement(item, fields, locale, "$ctx[$i]", unmatched, existingItem))
                 }
             }
@@ -279,6 +300,26 @@ class JsonLocalizer(private val db: TranslationDb) {
     companion object {
         private val ID_KEYS = listOf("id", "name", "key", "type")
         private val ANIMATION_PREFIXES = listOf("anim_", "animation_", "lottie_")
+
+        /**
+         * Stable identity of one array item, used to line it up with the same item in an
+         * existing localized file or in a locale file being exported.
+         *
+         * Returns null when the element carries no usable id field — callers must then decide
+         * for themselves whether positional matching is acceptable.
+         */
+        fun itemIdentity(el: JsonElement): String? {
+            if (!el.isJsonObject) return null
+            val obj = el.asJsonObject
+            ID_KEYS.forEach { key ->
+                val v = obj.get(key)
+                if (v != null && v.isJsonPrimitive) {
+                    val s = v.asString
+                    if (s.isNotEmpty()) return "$key=$s"
+                }
+            }
+            return null
+        }
     }
 
 }

@@ -165,10 +165,17 @@ class ExcelExporter(
             val localeItems = localeRoots.mapValues { (_, root) ->
                 if (root != null) collectJsonItems(root, asset.dataKey) else emptyList()
             }
+            // Match locale items by their own identity, not by position — a locale file whose
+            // items are ordered differently would otherwise put a neighbour's translation next
+            // to the English text, and the translator would "correct" the wrong row.
+            val localeByIdentity = localeItems.mapValues { (_, items) ->
+                items.mapNotNull { e -> JsonLocalizer.itemIdentity(e)?.let { it to e } }.toMap()
+            }
 
             baseItems.forEachIndexed { itemIdx, baseItem ->
                 if (!baseItem.isJsonObject) return@forEachIndexed
-                val baseObj = baseItem.asJsonObject
+                val baseObj  = baseItem.asJsonObject
+                val identity = JsonLocalizer.itemIdentity(baseItem)
                 // For each selected field
                 collectFieldsRecursively(baseObj, fields, "", { fieldPath, englishVal ->
                     val row = sheet.createRow(rowIdx++)
@@ -176,7 +183,8 @@ class ExcelExporter(
                     writeCell(row, 1, fieldPath)
                     writeCell(row, 2, englishVal)
                     locales.forEachIndexed { i, loc ->
-                        val locItem = localeItems[loc]?.getOrNull(itemIdx)
+                        val locItem = if (identity != null) localeByIdentity[loc]?.get(identity)
+                                      else localeItems[loc]?.getOrNull(itemIdx)
                         val locVal  = if (locItem != null && locItem.isJsonObject)
                             getNestedFieldValue(locItem.asJsonObject, fieldPath) else ""
                         writeCell(row, i + 3, locVal)
