@@ -553,6 +553,7 @@ class LocalizePanel(val project: Project) : JPanel(BorderLayout()) {
             generateMode     = persistence.generateMode,
             preserveKeyOrder = persistence.preserveKeyOrder,
             overrideNonTranslatable = persistence.overrideNonTranslatable,
+            keepExistingJsonFields  = persistence.keepExistingJsonFields,
             csvMappings  = buildMap {
                 listOf(csvAndroidField, csvOverlapField, csvArraysField).forEach { f ->
                     val path = f.text.trim().takeIf { it.isNotEmpty() } ?: return@forEach

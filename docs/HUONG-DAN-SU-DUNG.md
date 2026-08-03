@@ -423,6 +423,21 @@ Khi lấy lại bản dịch cũ, plugin ghép từng item theo **id riêng củ
 
 > Nếu item trong JSON của bạn **không có** field nào kiểu `id` / `name` / `key` / `type`, plugin buộc phải ghép theo vị trí. Trường hợp này nên tránh thêm / xoá / đảo item giữa các lần chạy.
 
+### JSON Assets — "Keep translations the CSV doesn't cover"
+
+**Mặc định: tắt. Chỉ có tác dụng ở chế độ Full Replace** (Merge vốn đã luôn giữ).
+
+| | Hành vi ở Full Replace |
+|---|---|
+| **Tắt** | Field nào CSV không có → **về tiếng Anh**, và được liệt kê trong report ở mục *JSON Fields Not Matched* |
+| **Bật** | Field nào CSV không có → **giữ bản dịch đang có** trong file locale (ghép theo `id`) |
+
+Dùng khi CSV chỉ cover một phần asset: bạn muốn Full Replace để dọn sạch XML, nhưng không muốn mất bản dịch JSON cũ.
+
+> **Đánh đổi:** khi bật, Full Replace sẽ **không bao giờ dọn được** nội dung JSON cũ. Một câu đã bị xoá khỏi CSV vẫn tồn tại mãi trong file locale. Report có mục *JSON Fields Kept From Previous File* đếm và liệt kê chính xác những field này — nên xem qua sau mỗi lần chạy.
+
+Muốn dọn sạch hoàn toàn: **tắt** setting này, chạy Full Replace một lần (mọi thứ CSV không cover sẽ về tiếng Anh), rồi bật lại nếu cần.
+
 ### Key Order — "Keep the position each key already has"
 
 **Mặc định: bật. Nên để bật.**
@@ -497,6 +512,7 @@ Sau mỗi lần Generate, plugin ghi một file `localize_report_{ngôn_ngữ}.m
 | **CSV Conflicts** | Cùng một key nhưng 2 file CSV ghi khác nhau. Plugin lấy theo `android_only` | Nhắc team dịch sửa cho khớp |
 | **XML Keys Not Found in CSV** | Key có trong `strings.xml` nhưng CSV không có | Gửi danh sách này cho team dịch |
 | **JSON Fields Not Matched** | Field JSON không tìm được bản dịch, đang giữ nguyên tiếng Anh | Bổ sung câu đó vào CSV |
+| **JSON Fields Kept From Previous File** | Field lấy lại bản dịch cũ vì CSV không có. **Không** nằm trong CSV hiện tại | Xem qua để biết phần nào của asset chưa được cover; bổ sung vào CSV nếu cần quản lý tập trung |
 | **Skipped String-Arrays** | Array bị bỏ vì có item không có bản dịch | Xem cột `Missing items` để biết thiếu item nào |
 
 > **Vì sao array thiếu 1 item lại bỏ cả array?** Vì nếu ghi ra một array nửa Hàn nửa Anh thì trên app sẽ hiện lộn xộn, khó phát hiện. Bỏ hẳn thì app dùng lại array tiếng Anh — nhìn là biết ngay còn thiếu. Ở chế độ Merge, nếu file cũ đã có item đó thì plugin giữ lại và không bỏ array.

@@ -307,6 +307,32 @@ object DevCheck {
         check("json replace: CSV value still applied", field2(17, "title") == "Bildgenerator NEU", field2(17, "title"))
         check("json replace: existing translation NOT reused",
               field2(11, "title") == "Deep Research", field2(11, "title"))
+
+        // ── Full Replace + keepExisting: existing values survive, matched by id ──
+        assets.resolve("features_de.json").toFile().writeText("""
+            [
+              {"id": 11, "title": "Tiefenrecherche",  "description": "Jedes Thema erkunden.", "image": "d.png"},
+              {"id": 15, "title": "E-Mail-Assistent", "description": "E-Mails schreiben.",    "image": "b.png"}
+            ]
+        """.trimIndent(), Charsets.UTF_8)
+        val r3 = com.paulbaker.localize.core.JsonLocalizer(db)
+            .localize(asset, "de", "de", GenerateMode.FULL_REPLACE, keepExisting = true)
+        val out3 = com.google.gson.JsonParser
+            .parseString(assets.resolve("features_de.json").toFile().readText(Charsets.UTF_8)).asJsonArray
+        fun field3(id: Int, f: String) =
+            out3.first { it.asJsonObject.get("id").asInt == id }.asJsonObject.get(f).asString
+
+        check("keepExisting: CSV still wins", field3(17, "title") == "Bildgenerator NEU", field3(17, "title"))
+        check("keepExisting: existing value kept", field3(11, "title") == "Tiefenrecherche", field3(11, "title"))
+        check("keepExisting: kept by id, not position",
+              field3(15, "title") == "E-Mail-Assistent", field3(15, "title"))
+        check("keepExisting: item in neither source stays English",
+              field3(12, "title") == "Sign in to sync", field3(12, "title"))
+        check("keepExisting: kept fields are reported",
+              r3.preserved.map { it.value }.containsAll(listOf("Deep Research", "Email Assistant")),
+              r3.preserved.map { it.value })
+        check("keepExisting: English fallbacks still reported as unmatched",
+              r3.unmatched.any { it.value == "Sign in to sync" }, r3.unmatched.map { it.value })
     }
 
     /** `translatable="false"` in the template must be invisible to BOTH generate and export. */

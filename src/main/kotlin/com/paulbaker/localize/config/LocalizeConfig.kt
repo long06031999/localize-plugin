@@ -34,6 +34,8 @@ data class LocalizeConfig(
     val preserveKeyOrder: Boolean = true,
     /** Write `translatable="false"` elements when — and only when — the source supplies a translation. */
     val overrideNonTranslatable: Boolean = false,
+    /** Extend the existing-JSON-file fallback to Full Replace. Merge always uses it. */
+    val keepExistingJsonFields: Boolean = false,
     val csvMappings: Map<String, CsvMapping> = emptyMap(), // filePath → mapping
     // null = use defaults relative to projectDir
     val valuesDir: Path? = null,

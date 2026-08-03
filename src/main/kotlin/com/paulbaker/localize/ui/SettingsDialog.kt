@@ -40,6 +40,11 @@ class SettingsDialog(
         font = font.deriveFont(13f)
     }
 
+    // JSON assets
+    private val keepJsonBox = JCheckBox("Keep translations the CSV doesn't cover").apply {
+        font = font.deriveFont(13f)
+    }
+
     // Directory pickers
     private val valuesDirField  = createDirPicker()
     private val assetsDirField  = createDirPicker()
@@ -105,6 +110,25 @@ class SettingsDialog(
         })
         root.add(vgap(14))
 
+        // ── JSON assets ────────────────────────────────────────────────────────
+        root.add(section("JSON Assets"))
+        root.add(vgap(6))
+        root.add(JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            alignmentX = Component.LEFT_ALIGNMENT
+            maximumSize = Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
+            add(keepJsonBox.apply { alignmentX = Component.LEFT_ALIGNMENT })
+            add(desc(
+                "Only affects <b>Full Replace</b> — Merge always keeps them.<br>" +
+                "Off: a JSON field the CSV doesn't cover falls back to English and is listed in " +
+                "the report.<br>" +
+                "On: it keeps whatever the locale file already had. Useful when the spreadsheet " +
+                "covers only part of an asset, but it also means Full Replace never clears stale " +
+                "JSON text. The report counts every field kept this way."
+            ).apply { alignmentX = Component.LEFT_ALIGNMENT })
+        })
+        root.add(vgap(14))
+
         // ── Directories ────────────────────────────────────────────────────────
         root.add(section("Directories  (leave blank to use defaults)"))
         root.add(vgap(6))
@@ -141,6 +165,7 @@ class SettingsDialog(
         else mergeRadio.isSelected = true
         preserveOrderBox.isSelected = persistence.preserveKeyOrder
         overrideNtBox.isSelected    = persistence.overrideNonTranslatable
+        keepJsonBox.isSelected      = persistence.keepExistingJsonFields
         // Show saved custom path, or fall back to default so user always sees what will be used
         valuesDirField.text = persistence.valuesDir.ifEmpty { defaultValuesDir }
         assetsDirField.text = persistence.assetsDir.ifEmpty { defaultAssetsDir }
@@ -151,6 +176,7 @@ class SettingsDialog(
         persistence.generateMode    = if (replaceRadio.isSelected) GenerateMode.FULL_REPLACE else GenerateMode.MERGE
         persistence.preserveKeyOrder = preserveOrderBox.isSelected
         persistence.overrideNonTranslatable = overrideNtBox.isSelected
+        persistence.keepExistingJsonFields  = keepJsonBox.isSelected
         // Save as empty if user left it at the default (so future default changes are picked up)
         persistence.valuesDir = valuesDirField.text.trim().let { if (it == defaultValuesDir) "" else it }
         persistence.assetsDir = assetsDirField.text.trim().let { if (it == defaultAssetsDir) "" else it }
@@ -162,6 +188,7 @@ class SettingsDialog(
         mergeRadio.isSelected = true
         preserveOrderBox.isSelected = true
         overrideNtBox.isSelected    = false
+        keepJsonBox.isSelected      = false
         valuesDirField.text   = defaultValuesDir
         assetsDirField.text   = defaultAssetsDir
         reportDirField.text   = defaultReportDir

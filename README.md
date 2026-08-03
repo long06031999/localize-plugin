@@ -346,6 +346,7 @@ Click **⚙** (top-right of the Localize panel):
 | Generate Mode | Merge | Merge vs Full Replace |
 | Keep the position each key already has | on | Key order in the locale files — see below |
 | Translate anyway when the source provides a value | off | `translatable="false"` override — see below |
+| Keep translations the CSV doesn't cover | off | JSON only, Full Replace only — see below |
 | Values dir | `app/src/main/res/values` | XML template source + locale output parent |
 | Assets dir | `app/src/main/assets` | JSON assets scan root |
 | Report dir | project root | Where `localize_report_*.md` is written |
@@ -363,6 +364,12 @@ A locale file rarely lists its keys in the same order as `values/strings.xml` �
 The setting applies to `<string>`, `<string-array>` and `<plurals>` alike, and works in both Merge and Full Replace (it only decides ordering, never content).
 
 ---
+
+### Keeping JSON fields the CSV doesn't cover
+
+Merge always falls back to the value already in `*_{locale}.json`. Full Replace does not — a field the CSV doesn't cover reverts to English and is reported. Tick **Keep translations the CSV doesn't cover** to extend the fallback to Full Replace, which is what you want when the spreadsheet only covers part of an asset.
+
+The trade-off is real and worth stating: with it on, Full Replace can never clear stale JSON text. A string dropped from the CSV lives on in the locale file indefinitely. The report therefore counts and lists every field kept this way under **JSON Fields Kept From Previous File** — that count is exactly the blind spot, so it belongs in front of the reviewer rather than buried.
 
 ### `translatable="false"`
 
@@ -529,6 +536,7 @@ Everything lives in `{project}/.idea/localize-plugin.json`, human-readable and s
   "generateMode": "MERGE",
   "preserveKeyOrder": true,
   "overrideNonTranslatable": false,
+  "keepExistingJsonFields": false,
   "valuesDir": "",
   "assetsDir": "",
   "reportDir": "",

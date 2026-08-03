@@ -1,5 +1,6 @@
 package com.paulbaker.localize
 
+import com.paulbaker.localize.config.GenerateMode
 import com.paulbaker.localize.config.LocalizeConfig
 import com.paulbaker.localize.core.CsvPreprocessor
 import com.paulbaker.localize.core.JsonLocalizer
@@ -79,6 +80,8 @@ class LocalizeRunner {
         logger("  Key order: ${if (config.preserveKeyOrder) "preserve existing positions" else "follow template"}", OutputLevel.INFO)
         if (config.overrideNonTranslatable)
             logger("  translatable=\"false\": overridden when the source has a value", OutputLevel.WARN)
+        if (config.keepExistingJsonFields && config.generateMode == GenerateMode.FULL_REPLACE)
+            logger("  JSON: keeping existing translations the CSV doesn't cover", OutputLevel.WARN)
 
         val allReports = mutableMapOf<String, LocaleReport>()
 
@@ -113,10 +116,14 @@ class LocalizeRunner {
             if (config.selectedAssets.isNotEmpty()) {
                 logger("Phase 3: Generating JSON for $locale...", OutputLevel.INFO)
                 config.selectedAssets.forEach { asset ->
-                    val result = jsonLoc.localize(asset, locale, locale, config.generateMode)
-                    logger("  [$locale] ${asset.baseFile.substringBeforeLast(".")}_$locale.json", OutputLevel.INFO)
+                    val result = jsonLoc.localize(
+                        asset, locale, locale, config.generateMode, config.keepExistingJsonFields
+                    )
+                    val keptNote = if (result.preserved.isNotEmpty()) " (${result.preserved.size} kept)" else ""
+                    logger("  [$locale] ${asset.baseFile.substringBeforeLast(".")}_$locale.json$keptNote", OutputLevel.INFO)
                     report.jsonWritten++
                     report.jsonUnmatched += result.unmatched
+                    report.jsonPreserved += result.preserved
                 }
             }
 
@@ -148,6 +155,7 @@ class LocaleReport(val locale: String) {
     val ntSkipped     = mutableListOf<XmlGenerator.NonTranslatable>()
     var jsonWritten  = 0
     val jsonUnmatched = mutableListOf<JsonLocalizer.UnmatchedField>()
+    val jsonPreserved = mutableListOf<JsonLocalizer.PreservedField>()
 
     fun toMarkdown(allConflicts: List<TranslationDb.Conflict>): String {
         val conflicts = allConflicts.filter { it.locale == locale }
@@ -163,6 +171,7 @@ class LocaleReport(val locale: String) {
         sb.appendLine("| XML values changed | ${changedKeys.size} |")
         sb.appendLine("| JSON files written | $jsonWritten |")
         sb.appendLine("| JSON fields unmatched | ${jsonUnmatched.size} |")
+        sb.appendLine("| JSON fields kept from previous file | ${jsonPreserved.size} |")
         sb.appendLine("| CSV conflicts | ${conflicts.size} |")
         sb.appendLine("| Skipped string-arrays | ${skippedArrays.size} |")
         sb.appendLine("| Non-translatable overridden | ${ntOverridden.size} |")
@@ -190,6 +199,20 @@ class LocaleReport(val locale: String) {
             sb.appendLine("| Key | English |")
             sb.appendLine("|---|---|")
             notFoundKeys.forEach { sb.appendLine("| `${it.key}` | ${it.enText} |") }
+            sb.appendLine()
+        }
+
+        if (jsonPreserved.isNotEmpty()) {
+            sb.appendLine("## JSON Fields Kept From Previous File\n")
+            sb.appendLine("The CSV had no translation for these, so the value already in the locale")
+            sb.appendLine("file was kept. They are NOT covered by the current spreadsheet.\n")
+            sb.appendLine("| File.Field | English Value | Times |")
+            sb.appendLine("|---|---|:---:|")
+            jsonPreserved
+                .groupBy { it.context.replace(Regex("""\[\d+\]"""), "") to it.value }
+                .mapValues { it.value.size }
+                .entries.sortedBy { it.key.first }
+                .forEach { (k, count) -> sb.appendLine("| `${k.first}` | ${k.second} | $count |") }
             sb.appendLine()
         }
 
