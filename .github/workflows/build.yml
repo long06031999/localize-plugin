@@ -1,0 +1,112 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same ref makes the running build irrelevant. Tags are never cancelled —
+# a release build must always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build & verify
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_release: ${{ steps.version.outputs.is_release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Caches ~/.gradle, which matters a lot here: the IntelliJ Platform dependency is well
+      # over a gigabyte and would otherwise be re-downloaded on every run.
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          base=$(grep -E '^pluginVersion=' gradle.properties | cut -d= -f2)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF#refs/tags/v}"
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          else
+            # Build number keeps main artifacts distinguishable and ordered.
+            version="${base}-main.${GITHUB_RUN_NUMBER}"
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building version $version"
+
+      - name: Verify & build
+        run: >-
+          ./gradlew --no-daemon --stacktrace
+          -PpluginVersion=${{ steps.version.outputs.version }}
+          devCheck verifyPlugin buildPlugin
+
+      - name: Upload plugin zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: localize-plugin-${{ steps.version.outputs.version }}
+          path: build/distributions/*.zip
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Publish to GitHub Releases
+    # Only for pushes to main and version tags. Pull requests stop at the build job — they must
+    # never get a write token, least of all from a fork.
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: localize-plugin-${{ needs.build.outputs.version }}
+          path: dist
+
+      - name: Publish tagged release
+        if: needs.build.outputs.is_release == 'true'
+        run: |
+          set -euo pipefail
+          gh release create "v${VERSION}" dist/*.zip \
+            --title "v${VERSION}" \
+            --generate-notes
+
+      - name: Update rolling main build
+        if: needs.build.outputs.is_release == 'false'
+        run: |
+          set -euo pipefail
+          # Recreated rather than updated so the asset list never accumulates stale zips.
+          gh release delete main-latest --cleanup-tag --yes 2>/dev/null || true
+          cat > notes.md <<EOF
+          Automated build of \`main\` at \`${GITHUB_SHA}\`.
+
+          Not a tagged release — for anything you intend to keep, install a version from the Releases list.
+
+          Install: **Settings → Plugins → ⚙ → Install Plugin from Disk...**
+          EOF
+          gh release create main-latest dist/*.zip \
+            --target "$GITHUB_SHA" \
+            --title "Latest main build (${VERSION})" \
+            --prerelease \
+            --notes-file notes.md

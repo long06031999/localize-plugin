@@ -29,6 +29,7 @@ Built for the `app/` module layout, but every directory is configurable.
 - [Tool 2 — Export to Excel](#tool-2--export-to-excel)
 - [Configuration File](#configuration-file)
 - [Architecture](#architecture)
+- [CI / CD](#ci--cd)
 - [Building from Source](#building-from-source)
 - [Adding a New Language](#adding-a-new-language)
 
@@ -599,17 +600,13 @@ src/main/kotlin/com/paulbaker/localize/
 └── DevCheck.kt                        # Dev-only harness: end-to-end generator checks
 ```
 
-`DevCheck` is not wired into the plugin; it covers key ordering, array item resolution and per-item Merge fallback. Run it against the compiled classes:
+`DevCheck` is not wired into the plugin; it covers key ordering, array item resolution, per-item Merge fallback, `translatable="false"`, JSON identity pairing, preview/Generate parity and dashboard layout. CI runs it as a gate:
 
 ```bash
-./gradlew compileKotlin
-IJ=$(find ~/.gradle/caches -path '*ideaIC*/lib' -maxdepth 8 -type d | head -1)
-CP="build/classes/kotlin/main:$IJ/*"
-for j in $(find ~/.gradle/caches/modules-2 -name '*.jar' | grep -vE 'sources|javadoc' \
-    | grep -E 'kotlin-stdlib-2.0.0.jar|/poi-5.2.3.jar|poi-ooxml-5.2.3.jar|poi-ooxml-lite|xmlbeans|commons-compress|commons-codec|commons-collections4|SparseBitSet|curvesapi|gson-2.10.1.jar' \
-    | sort -u); do CP="$CP:$j"; done
-java -cp "$CP" com.paulbaker.localize.DevCheck
+./gradlew devCheck
 ```
+
+It exits non-zero on failure. The task pulls in `compileClasspath` as well as `runtimeClasspath` because the IntelliJ Platform jars live only on the former — the IDE normally supplies them at runtime — plus a `devCheckOnly` configuration for Gson, kept out of `implementation` so no second copy ships in the plugin zip.
 
 ### Key Design Decisions
 
@@ -641,11 +638,43 @@ java -cp "$CP" com.paulbaker.localize.DevCheck
 
 ---
 
+## CI / CD
+
+`.github/workflows/build.yml` gates every change and publishes builds to GitHub Releases.
+
+| Event | What happens |
+|-------|--------------|
+| Pull request | `devCheck` → `verifyPlugin` → `buildPlugin`; zip uploaded as a workflow artifact. No release, no write token. |
+| Push to `main` | Same, then the `main-latest` **pre-release** is recreated with the new zip — a stable URL for the newest build. |
+| Tag `v*` | Same, then a real release named after the tag, with generated notes. |
+
+`workflow_dispatch` allows a manual run from the Actions tab.
+
+### Cutting a release
+
+```bash
+git tag v1.1.0
+git push origin v1.1.0
+```
+
+The tag is the single source of version truth: CI passes `-PpluginVersion=1.1.0`, which lands in the zip name and in `plugin.xml`. `pluginVersion` in `gradle.properties` is only the fallback for local builds — there is no second place to bump.
+
+### Notes
+
+- The `main-latest` pre-release is deleted and recreated each time (`--cleanup-tag`) so its asset list never accumulates stale zips. Drop that step if a mutating release is unwanted.
+- Concurrency cancels superseded runs per ref, except on tags — a release build always finishes.
+- `~/.gradle` is cached. It matters: the IntelliJ Platform dependency is over a gigabyte.
+- Publishing to the JetBrains Marketplace is *not* wired up. `publishPlugin` plus a `PUBLISH_TOKEN` secret would do it.
+
+---
+
 ## Building from Source
 
 ```bash
-./gradlew buildPlugin           # → build/distributions/localize-plugin-1.0.0.zip
+./gradlew buildPlugin           # → build/distributions/localize-plugin-<version>.zip
 ./gradlew runIde                # Sandbox IDE for development
+./gradlew devCheck              # Run the verification harness (68 checks)
+./gradlew verifyPlugin          # Plugin structure check
 ./gradlew clean buildPlugin     # Clean build
 ```
 

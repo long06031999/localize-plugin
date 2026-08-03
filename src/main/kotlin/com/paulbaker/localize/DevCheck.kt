@@ -25,6 +25,8 @@ object DevCheck {
         testJsonPreviewMatchesGenerate(root.resolve("t9"))
         testDashboardCentering()
         println(if (failures == 0) "\nALL CHECKS PASSED" else "\n$failures CHECK(S) FAILED")
+        // Non-zero exit so CI actually fails on a regression instead of printing and moving on.
+        if (failures > 0) kotlin.system.exitProcess(1)
     }
 
     // ── Scenarios ─────────────────────────────────────────────────────────────
