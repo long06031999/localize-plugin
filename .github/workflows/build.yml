@@ -22,7 +22,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      is_release: ${{ steps.version.outputs.is_release }}
     steps:
       - uses: actions/checkout@v4
 
@@ -42,11 +41,9 @@ jobs:
           base=$(grep -E '^pluginVersion=' gradle.properties | cut -d= -f2)
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             version="${GITHUB_REF#refs/tags/v}"
-            echo "is_release=true" >> "$GITHUB_OUTPUT"
           else
             # Build number keeps main artifacts distinguishable and ordered.
             version="${base}-main.${GITHUB_RUN_NUMBER}"
-            echo "is_release=false" >> "$GITHUB_OUTPUT"
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Building version $version"
@@ -65,11 +62,13 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  publish:
-    name: Publish to GitHub Releases
-    # Only for pushes to main and version tags. Pull requests stop at the build job — they must
-    # never get a write token, least of all from a fork.
-    if: github.event_name == 'push'
+  # ── Release jobs: tags only ────────────────────────────────────────────────
+  # Pushes to main are verified but never published. Independent jobs so a failure in one is
+  # re-runnable on its own without redoing the other.
+
+  github-release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -84,29 +83,50 @@ jobs:
           name: localize-plugin-${{ needs.build.outputs.version }}
           path: dist
 
-      - name: Publish tagged release
-        if: needs.build.outputs.is_release == 'true'
+      - name: Create or update release
         run: |
           set -euo pipefail
-          gh release create "v${VERSION}" dist/*.zip \
-            --title "v${VERSION}" \
-            --generate-notes
+          # Idempotent so re-running a tag's workflow is safe — `create` fails if the release
+          # already exists, which would block re-running the Marketplace job beside it.
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "Release v${VERSION} exists — replacing its asset."
+            gh release upload "v${VERSION}" dist/*.zip --clobber
+          else
+            gh release create "v${VERSION}" dist/*.zip \
+              --title "v${VERSION}" \
+              --generate-notes
+          fi
 
-      - name: Update rolling main build
-        if: needs.build.outputs.is_release == 'false'
+  marketplace:
+    name: JetBrains Marketplace
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+    steps:
+      - name: Require the publish token
         run: |
-          set -euo pipefail
-          # Recreated rather than updated so the asset list never accumulates stale zips.
-          gh release delete main-latest --cleanup-tag --yes 2>/dev/null || true
-          cat > notes.md <<EOF
-          Automated build of \`main\` at \`${GITHUB_SHA}\`.
+          if [[ -z "${PUBLISH_TOKEN}" ]]; then
+            echo "::error::PUBLISH_TOKEN secret is not set. Create a token at" \
+                 "https://plugins.jetbrains.com/author/me/tokens and add it under" \
+                 "Settings → Secrets and variables → Actions."
+            exit 1
+          fi
 
-          Not a tagged release — for anything you intend to keep, install a version from the Releases list.
+      - uses: actions/checkout@v4
 
-          Install: **Settings → Plugins → ⚙ → Install Plugin from Disk...**
-          EOF
-          gh release create main-latest dist/*.zip \
-            --target "$GITHUB_SHA" \
-            --title "Latest main build (${VERSION})" \
-            --prerelease \
-            --notes-file notes.md
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Rebuilds from the same commit the build job verified. publishPlugin uploads the
+      # distribution it produces, so it has to run from the project rather than from a zip.
+      - name: Publish
+        run: >-
+          ./gradlew --no-daemon --stacktrace
+          -PpluginVersion=${{ needs.build.outputs.version }}
+          publishPlugin

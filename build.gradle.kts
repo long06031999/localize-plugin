@@ -42,6 +42,13 @@ tasks {
         sinceBuild.set("241")
         untilBuild.set("")
     }
+    publishPlugin {
+        // Marketplace token, from the PUBLISH_TOKEN secret in CI.
+        token.set(providers.environmentVariable("PUBLISH_TOKEN"))
+        // A pre-release version goes to the eap channel, never to stable: 1.0.2 is a release,
+        // 1.0.2-beta.1 is not, and the version string is the only thing that decides.
+        channels.set(listOf(if ("-" in project.version.toString()) "eap" else "default"))
+    }
 }
 
 /**

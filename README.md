@@ -644,9 +644,11 @@ It exits non-zero on failure. The task pulls in `compileClasspath` as well as `r
 
 | Event | What happens |
 |-------|--------------|
-| Pull request | `devCheck` → `verifyPlugin` → `buildPlugin`; zip uploaded as a workflow artifact. No release, no write token. |
-| Push to `main` | Same, then the `main-latest` **pre-release** is recreated with the new zip — a stable URL for the newest build. |
-| Tag `v*` | Same, then a real release named after the tag, with generated notes. |
+| Pull request | `devCheck` → `verifyPlugin` → `buildPlugin`; zip uploaded as a workflow artifact. No publish, no write token. |
+| Push to `main` | Same. **Nothing is published** — main is a verification gate, not a release channel. |
+| Tag `v*` | Same, then two independent jobs: a GitHub Release, and a JetBrains Marketplace upload. |
+
+Publishing happens on tags only. The two release jobs are independent, so if one fails you can re-run just that job from the Actions tab.
 
 `workflow_dispatch` allows a manual run from the Actions tab.
 
@@ -657,14 +659,35 @@ git tag v1.1.0
 git push origin v1.1.0
 ```
 
+That one push produces the GitHub Release and the Marketplace upload.
+
 The tag is the single source of version truth: CI passes `-PpluginVersion=1.1.0`, which lands in the zip name and in `plugin.xml`. `pluginVersion` in `gradle.properties` is only the fallback for local builds — there is no second place to bump.
+
+### JetBrains Marketplace
+
+Requires a repository secret named **`PUBLISH_TOKEN`** — a Marketplace token from
+<https://plugins.jetbrains.com/author/me/tokens>, added under
+*Settings → Secrets and variables → Actions*.
+
+The job fails loudly with a pointer to that page when the secret is missing, rather than skipping
+quietly: if you tagged a release, you meant to publish it, and a silent no-op there is the kind of
+thing nobody notices for weeks.
+
+The channel is chosen from the version string alone: `1.0.2` goes to **stable**, anything
+containing a hyphen (`1.0.2-beta.1`) goes to **eap**. A pre-release therefore cannot reach stable
+users by accident.
+
+Marketplace uploads are **not** idempotent — a version already published is rejected. Bump the
+tag rather than re-running.
 
 ### Notes
 
-- The `main-latest` pre-release is deleted and recreated each time (`--cleanup-tag`) so its asset list never accumulates stale zips. Drop that step if a mutating release is unwanted.
+- The GitHub Release step is idempotent: it clobbers the asset if the release already exists, so
+  re-running a tag's workflow is safe. Marketplace is not, per above.
 - Concurrency cancels superseded runs per ref, except on tags — a release build always finishes.
 - `~/.gradle` is cached. It matters: the IntelliJ Platform dependency is over a gigabyte.
-- Publishing to the JetBrains Marketplace is *not* wired up. `publishPlugin` plus a `PUBLISH_TOKEN` secret would do it.
+- The Marketplace job rebuilds from the same commit rather than uploading the artifact the build
+  job produced, because `publishPlugin` uploads the distribution it builds itself.
 
 ---
 
