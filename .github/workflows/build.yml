@@ -41,6 +41,15 @@ jobs:
           base=$(grep -E '^pluginVersion=' gradle.properties | cut -d= -f2)
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             version="${GITHUB_REF#refs/tags/v}"
+            # gradle.properties is the single source of truth; the tag must agree with the commit
+            # it points at. Deriving the version from the tag alone let the file drift, so a
+            # local build of a released commit reported a different version than the release.
+            if [[ "$version" != "$base" ]]; then
+              echo "::error::Tag v${version} points at a commit whose gradle.properties says" \
+                   "pluginVersion=${base}. Use ./scripts/release.sh ${version} — it bumps the" \
+                   "file, commits, then tags, so the tag always contains its own version."
+              exit 1
+            fi
           else
             # Build number keeps main artifacts distinguishable and ordered.
             version="${base}-main.${GITHUB_RUN_NUMBER}"

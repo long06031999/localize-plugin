@@ -1,0 +1,21 @@
+<!--
+  Marketplace / Plugins-list icon. Must be exactly this path and name — the platform finds it by
+  convention, and without it the generic plug placeholder is shown.
+
+  40x40 per JetBrains guidelines. Drawn for this size rather than scaled up from the 16px tool
+  window icon, and font-free: an SVG <text> glyph would depend on whatever fonts the Marketplace
+  renderer happens to have.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="40" height="40">
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Globe -->
+    <circle cx="16.5" cy="24.5" r="11.5" stroke="#3B82C4" stroke-width="2.4"/>
+    <ellipse cx="16.5" cy="24.5" rx="11.5" ry="4.3" stroke="#3B82C4" stroke-width="1.5"/>
+    <ellipse cx="16.5" cy="24.5" rx="4.3"  ry="11.5" stroke="#3B82C4" stroke-width="1.5"/>
+
+    <!-- Translation arrow arcing over the globe. The head is a filled triangle: a stroked
+         polyline leaves a visible notch at the tip once scaled down to list size. -->
+    <path d="M7 9 Q20 1.5 32.1 7.55" stroke="#E2703A" stroke-width="2.4"/>
+    <path d="M35.85 9.43 L33.7 4.3 L30.5 10.8 Z" fill="#E2703A" stroke="none"/>
+  </g>
+</svg>

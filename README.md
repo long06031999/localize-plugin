@@ -655,13 +655,15 @@ Publishing happens on tags only. The two release jobs are independent, so if one
 ### Cutting a release
 
 ```bash
-git tag v1.1.0
-git push origin v1.1.0
+./scripts/release.sh 1.1.0
+git push origin main && git push origin v1.1.0
 ```
 
-That one push produces the GitHub Release and the Marketplace upload.
+The script bumps `pluginVersion`, commits, then tags — in that order, so the tag points at a commit whose `gradle.properties` states that very version. It refuses to run on a dirty tree, off `main`, out of sync with the remote, on an existing tag, or for a version already on the Marketplace.
 
-The tag is the single source of version truth: CI passes `-PpluginVersion=1.1.0`, which lands in the zip name and in `plugin.xml`. `pluginVersion` in `gradle.properties` is only the fallback for local builds — there is no second place to bump.
+**`gradle.properties` is the single source of version truth.** CI checks the tag against it and fails the build if they disagree, which is why the order matters: tagging first and bumping afterwards would leave every released commit claiming the previous version, so a local build of a released commit would report a different version than the release itself.
+
+Nothing is pushed automatically — the push is what publishes, so it stays a deliberate step. Both pushes are needed: the commit carries the version, the tag triggers the release.
 
 ### JetBrains Marketplace
 
@@ -688,6 +690,16 @@ tag rather than re-running.
 - `~/.gradle` is cached. It matters: the IntelliJ Platform dependency is over a gigabyte.
 - The Marketplace job rebuilds from the same commit rather than uploading the artifact the build
   job produced, because `publishPlugin` uploads the distribution it builds itself.
+
+### Plugin icon
+
+`META-INF/pluginIcon.svg` and `pluginIcon_dark.svg` (40×40) are what the Marketplace and the
+Plugins list show. The platform finds them by that exact path and filename — with them absent, the
+generic plug placeholder appears no matter what other icons the plugin ships. `icons/localize.svg`
+is the 16×16 tool-window icon and is not a substitute.
+
+Both are font-free: an SVG `<text>` glyph would depend on whichever fonts the Marketplace renderer
+happens to have.
 
 ---
 

@@ -1,0 +1,17 @@
+<!--
+  Dark-theme variant of pluginIcon.svg — same geometry, lifted contrast. Picked up automatically
+  by the `_dark` suffix; the light icon's mid-blue is legible but muddy on a dark background.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="40" height="40">
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Globe -->
+    <circle cx="16.5" cy="24.5" r="11.5" stroke="#6FB0E8" stroke-width="2.4"/>
+    <ellipse cx="16.5" cy="24.5" rx="11.5" ry="4.3" stroke="#6FB0E8" stroke-width="1.5"/>
+    <ellipse cx="16.5" cy="24.5" rx="4.3"  ry="11.5" stroke="#6FB0E8" stroke-width="1.5"/>
+
+    <!-- Translation arrow arcing over the globe. The head is a filled triangle: a stroked
+         polyline leaves a visible notch at the tip once scaled down to list size. -->
+    <path d="M7 9 Q20 1.5 32.1 7.55" stroke="#F2955F" stroke-width="2.4"/>
+    <path d="M35.85 9.43 L33.7 4.3 L30.5 10.8 Z" fill="#F2955F" stroke="none"/>
+  </g>
+</svg>
